@@ -1,0 +1,19 @@
+{
+  "name": "discord-link-cleaner",
+  "version": "1.0.0",
+  "description": "Cleans Reddit bot posts by extracting GIF links",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "keywords": ["discord", "bot", "link-cleaner"],
+  "author": "You",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
