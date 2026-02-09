@@ -1,13 +1,15 @@
 # Discord Link Cleaner Bot
 
-Bot that extracts GIF links from Reddit bot posts and reposts clean links.
+Bot that monitors 4 specific bots and cleans their links.
 
-## Features
-- Extracts RedGIFs, i.redd.it, and Imgur links
-- Deletes original message
-- Posts clean links only
-- Targets specific bot IDs
+## Health Endpoint
+- `GET /health` - JSON status for UptimeRobot
+- `GET /` - Simple HTML page
 
 ## Setup
 1. Set `BOT_TOKEN` environment variable
-2. Configure target bot IDs in index.js
+2. Bot IDs are hardcoded
+
+## Files
+- `index.js` - Main bot code
+- `package.json` - Dependencies
