@@ -1,3 +1,27 @@
+// ========== ADD THIS AT THE TOP OF YOUR FILE ==========
+const http = require('http');
+
+// Create a simple HTTP server for health checks
+const server = http.createServer((req, res) => {
+  if (req.url === '/health' || req.url === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('🚀 Discord Link Cleaner Bot is running!\n' +
+            `🕐 Uptime: ${process.uptime().toFixed(0)} seconds\n` +
+            `💾 Memory: ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB`);
+  } else {
+    res.writeHead(404);
+    res.end('Not Found');
+  }
+});
+
+// Start the HTTP server on a random port (Render will assign one)
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`🌐 Health check server running on port ${PORT}`);
+  console.log(`🔗 Health check URL: http://localhost:${PORT}/health`);
+});
+// ========== END OF ADDED CODE ==========
+
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
 
 console.log('🚀 Starting Discord Link Cleaner Bot...');
@@ -170,6 +194,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 
 if (!BOT_TOKEN) {
   console.error('❌ ERROR: BOT_TOKEN environment variable is not set!');
+  console.error('💡 On Render: Add BOT_TOKEN in Environment Variables');
   process.exit(1);
 }
 
