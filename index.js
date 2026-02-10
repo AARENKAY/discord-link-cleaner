@@ -110,6 +110,15 @@ client.on('messageCreate', async (message) => {
   for (const url of allUrls) {
     const urlLower = url.toLowerCase();
     
+    // Check if URL is from Twitter/X
+    const isTwitterLink = urlLower.includes('x.com/') || urlLower.includes('twitter.com/');
+    
+    // Twitter/X links are always allowed (they'll be converted to vxtwitter)
+    if (isTwitterLink) {
+      allowedUrls.push(url);
+      continue;
+    }
+    
     // Check if URL is from an allowed website
     let isAllowedWebsite = false;
     for (const website of ALLOWED_WEBSITES) {
@@ -193,8 +202,12 @@ client.on('messageCreate', async (message) => {
         let cleanUrl = url.split('?')[0].trim();
         cleanUrl = cleanUrl.replace(/\/+$/, '');
         
+        // Convert Twitter/X links to vxtwitter.com
+        if (cleanUrl.toLowerCase().includes('x.com/') || cleanUrl.toLowerCase().includes('twitter.com/')) {
+          cleanUrl = cleanUrl.replace(/https?:\/\/(www\.)?(x\.com|twitter\.com)/i, 'https://vxtwitter.com');
+        }
+        
         // Format ALL allowed links with subreddit or username
-        // (not just links from ALLOWED_WEBSITES)
         if (subreddit) {
           // Use subreddit if available
           cleanedLinks.push(`[${subreddit}](${cleanUrl})`);
@@ -216,6 +229,14 @@ client.on('messageCreate', async (message) => {
           // Add subreddit info to success log if available
           const subredditSuccessInfo = subredditInfo ? `\n${subredditInfo}` : '';
           
+          // Check if any Twitter links were converted
+          const twitterLinksConverted = allowedUrls.filter(url => 
+            url.toLowerCase().includes('x.com/') || url.toLowerCase().includes('twitter.com/')
+          ).length;
+          
+          const twitterConversionInfo = twitterLinksConverted > 0 ? 
+            `• ${twitterLinksConverted} Twitter/X link(s) converted to vxtwitter.com\n` : '';
+          
           const formattingInfo = subreddit ? 
             `• All links formatted with subreddit: ${subreddit}\n` : 
             `• All links formatted with username: ${senderUsername}\n`;
@@ -223,6 +244,7 @@ client.on('messageCreate', async (message) => {
           await logChannel.send(
             `✅ **Cleaning Complete**\n` +
             `• Processed ${allowedUrls.length} link(s) from **${message.author.tag}** in <#${message.channel.id}>${subredditSuccessInfo}` +
+            `${twitterConversionInfo}` +
             `${formattingInfo}` +
             `• Blocked ${blockedUrls.length} unwanted link(s)`
           );
