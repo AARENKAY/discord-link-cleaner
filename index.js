@@ -75,31 +75,6 @@ const cleanUrl = (url) => {
   
   return cleaned;
 };
-
-// ========== URL RESOLVER ==========
-const resolveUrl = async (shortUrl) => {
-  try {
-    console.log(`🔄 Resolving URL: ${shortUrl}`);
-    
-    const response = await axios.get(shortUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      },
-      maxRedirects: 5,
-      timeout: 5000
-    });
-    
-    // Get the final URL after redirects
-    const finalUrl = response.request.res.responseUrl;
-    console.log(`✅ Resolved: ${shortUrl} -> ${finalUrl}`);
-    
-    return finalUrl;
-  } catch (error) {
-    console.error(`❌ Failed to resolve ${shortUrl}:`, error.message);
-    return null;
-  }
-};
-
 // ========== REDDIT CONTENT EXTRACTOR ==========
 const extractRedditContent = async (redditUrl) => {
   try {
@@ -181,16 +156,31 @@ const extractRedditContent = async (redditUrl) => {
       }
     }
     
-    // 2. Check for video content (fallback_url from secure_media or media)
+    // 2. Check for video content - MULTIPLE LOCATIONS!
+    let videoUrl = null;
+    
+    // Location 1: secure_media.reddit_video.fallback_url
     if (postData.secure_media?.reddit_video?.fallback_url) {
-      const videoUrl = postData.secure_media.reddit_video.fallback_url;
-      const cleanedUrl = cleanUrl(videoUrl);
-      extractedUrls.push(cleanedUrl);
-      console.log(`🎥 Extracted video: ${cleanedUrl}`);
-    } 
-    // Also check in media object
+      videoUrl = postData.secure_media.reddit_video.fallback_url;
+      console.log(`🎥 Found video in secure_media.reddit_video: ${videoUrl}`);
+    }
+    // Location 2: media.reddit_video.fallback_url
     else if (postData.media?.reddit_video?.fallback_url) {
-      const videoUrl = postData.media.reddit_video.fallback_url;
+      videoUrl = postData.media.reddit_video.fallback_url;
+      console.log(`🎥 Found video in media.reddit_video: ${videoUrl}`);
+    }
+    // Location 3: preview.reddit_video_preview.fallback_url (NEW - this is where it is!)
+    else if (postData.preview?.reddit_video_preview?.fallback_url) {
+      videoUrl = postData.preview.reddit_video_preview.fallback_url;
+      console.log(`🎥 Found video in preview.reddit_video_preview: ${videoUrl}`);
+    }
+    // Location 4: crosspost_parent_list (for crossposts)
+    else if (postData.crosspost_parent_list?.[0]?.preview?.reddit_video_preview?.fallback_url) {
+      videoUrl = postData.crosspost_parent_list[0].preview.reddit_video_preview.fallback_url;
+      console.log(`🎥 Found video in crosspost preview: ${videoUrl}`);
+    }
+    
+    if (videoUrl) {
       const cleanedUrl = cleanUrl(videoUrl);
       extractedUrls.push(cleanedUrl);
       console.log(`🎥 Extracted video: ${cleanedUrl}`);
@@ -202,10 +192,27 @@ const extractRedditContent = async (redditUrl) => {
       // Check if it's a direct image/video link
       if (urlLower.includes('.jpg') || urlLower.includes('.jpeg') || 
           urlLower.includes('.png') || urlLower.includes('.gif') ||
-          urlLower.includes('.mp4') || urlLower.includes('.webm')) {
+          urlLower.includes('.mp4') || urlLower.includes('.webm') ||
+          urlLower.includes('i.redd.it') || urlLower.includes('v.redd.it')) {
         const cleanedUrl = cleanUrl(postData.url);
         extractedUrls.push(cleanedUrl);
         console.log(`🖼️ Extracted direct media: ${cleanedUrl}`);
+      }
+      // Also check for redgifs links
+      else if (urlLower.includes('redgifs.com')) {
+        const cleanedUrl = cleanUrl(postData.url);
+        extractedUrls.push(cleanedUrl);
+        console.log(`🎬 Extracted Redgif link: ${cleanedUrl}`);
+      }
+    }
+    
+    // 4. Also check url_overridden_by_dest (sometimes different from url)
+    if (postData.url_overridden_by_dest && !extractedUrls.length) {
+      const urlLower = postData.url_overridden_by_dest.toLowerCase();
+      if (urlLower.includes('redgifs.com')) {
+        const cleanedUrl = cleanUrl(postData.url_overridden_by_dest);
+        extractedUrls.push(cleanedUrl);
+        console.log(`🎬 Extracted Redgif from url_overridden_by_dest: ${cleanedUrl}`);
       }
     }
     
@@ -221,7 +228,9 @@ const extractRedditContent = async (redditUrl) => {
       author: postData.author,
       source: 'reddit',
       hasGallery: !!postData.media_metadata,
-      hasVideo: !!(postData.secure_media?.reddit_video || postData.media?.reddit_video)
+      hasVideo: !!(postData.secure_media?.reddit_video || 
+                  postData.media?.reddit_video || 
+                  postData.preview?.reddit_video_preview)
     };
     
   } catch (error) {
@@ -229,6 +238,33 @@ const extractRedditContent = async (redditUrl) => {
     return null;
   }
 };
+
+
+// ========== URL RESOLVER ==========
+const resolveUrl = async (shortUrl) => {
+  try {
+    console.log(`🔄 Resolving URL: ${shortUrl}`);
+    
+    const response = await axios.get(shortUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      },
+      maxRedirects: 5,
+      timeout: 5000
+    });
+    
+    // Get the final URL after redirects
+    const finalUrl = response.request.res.responseUrl;
+    console.log(`✅ Resolved: ${shortUrl} -> ${finalUrl}`);
+    
+    return finalUrl;
+  } catch (error) {
+    console.error(`❌ Failed to resolve ${shortUrl}:`, error.message);
+    return null;
+  }
+};
+
+
 
 // ========== MESSAGE FORMATTING ==========
 const formatMessage = (title, subreddit, author, urls, hasGallery = false, hasVideo = false) => {
