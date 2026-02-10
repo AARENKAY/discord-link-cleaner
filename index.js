@@ -55,17 +55,101 @@ const ALLOWED_WEBSITES = [
 const LOG_CHANNEL_ID = '1470005338483982400';
 // ========== END CONFIG ==========
 
+// ========== URL CONVERSION FUNCTIONS ==========
+const convertPreviewToIreddit = (url) => {
+  // Convert preview.redd.it URLs to i.redd.it URLs
+  if (url && url.includes('preview.redd.it')) {
+    // Extract the filename from the preview URL
+    // Example: https://preview.redd.it/bqndmrj4boig1.png?width=320&format=png -> https://i.redd.it/bqndmrj4boig1.png
+    const urlObj = new URL(url);
+    const pathname = urlObj.pathname;
+    const filename = pathname.split('/').pop();
+    
+    // Determine the actual file extension (remove any format parameters)
+    let extension = '.png'; // Default
+    if (filename.includes('.jpg') || filename.includes('.jpeg')) {
+      extension = '.jpg';
+    } else if (filename.includes('.gif')) {
+      extension = '.gif';
+    } else if (filename.includes('.png')) {
+      extension = '.png';
+    } else if (filename.includes('.webp')) {
+      extension = '.webp';
+    }
+    
+    // Get the base filename without any .gif?format= etc.
+    const baseFilename = filename.split('.')[0];
+    return `https://i.redd.it/${baseFilename}${extension}`;
+  }
+  return url;
+};
+
+const convertTwitterToVxtwitter = (url) => {
+  // Convert Twitter/X links to vxtwitter.com
+  if (url && (url.includes('x.com/') || url.includes('twitter.com/'))) {
+    return url.replace(/https?:\/\/(www\.)?(x\.com|twitter\.com)/i, 'https://vxtwitter.com');
+  }
+  return url;
+};
+
+const cleanUrl = (url) => {
+  if (!url) return url;
+  
+  // First convert preview.redd.it to i.redd.it
+  let cleanUrl = convertPreviewToIreddit(url);
+  
+  // Then convert Twitter/X to vxtwitter
+  cleanUrl = convertTwitterToVxtwitter(cleanUrl);
+  
+  // Remove query parameters and trailing slashes
+  cleanUrl = cleanUrl.split('?')[0].trim();
+  cleanUrl = cleanUrl.replace(/\/+$/, '');
+  
+  return cleanUrl;
+};
+
 // ========== REDDIT URL RESOLVER ==========
 const resolveRedditUrl = async (shortenedUrl) => {
   try {
-    // Make a request to the shortened URL
-    const response = await axios.get(shortenedUrl, { maxRedirects: 5 });
+    // Add headers to mimic a browser
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.5',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'DNT': '1',
+      'Connection': 'keep-alive',
+      'Upgrade-Insecure-Requests': '1',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1',
+      'Cache-Control': 'max-age=0'
+    };
     
-    // Extract the full post URL from the redirection headers
-    const fullUrl = response.request.res.responseUrl;
+    // Make a request to the shortened URL
+    const response = await axios.get(shortenedUrl, { 
+      maxRedirects: 5,
+      headers: headers,
+      timeout: 10000
+    });
+    
+    // Extract the full post URL from the response
+    let fullUrl = response.request.res.responseUrl || shortenedUrl;
     console.log(`🔄 Resolved URL: ${shortenedUrl} -> ${fullUrl}`);
-
-    // Get the full post data as JSON
+    
+    // If it's a redd.it link that resolves to a gallery, get the proper JSON URL
+    if (fullUrl.includes('/gallery/')) {
+      // Extract the post ID from gallery URL
+      const galleryMatch = fullUrl.match(/\/gallery\/([a-zA-Z0-9]+)/);
+      if (galleryMatch) {
+        const postId = galleryMatch[1];
+        // Try to get the comments JSON URL instead
+        fullUrl = `https://www.reddit.com/comments/${postId}/`;
+      }
+    }
+    
+    // Get the proper JSON URL
     const jsonUrl = `${fullUrl}.json`;
     return { fullUrl, jsonUrl };
   } catch (error) {
@@ -130,44 +214,94 @@ const processRedditGallery = async (jsonUrl, message) => {
   try {
     console.log(`🎨 Processing Reddit gallery: ${jsonUrl}`);
     
-    const response = await axios.get(jsonUrl);
-    const postData = response.data[0].data.children[0].data;
+    // Add proper headers for Reddit API
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      'Accept': 'application/json',
+      'Accept-Language': 'en-US,en;q=0.9',
+    };
+    
+    const response = await axios.get(jsonUrl, { 
+      headers: headers,
+      timeout: 10000
+    });
+    
+    // Handle different Reddit JSON structures
+    let postData;
+    if (Array.isArray(response.data)) {
+      // Standard Reddit JSON structure
+      postData = response.data[0].data.children[0].data;
+    } else if (response.data.kind === 'Listing') {
+      // Alternative structure
+      postData = response.data.data.children[0].data;
+    } else {
+      console.error('❌ Unexpected Reddit JSON structure');
+      return null;
+    }
     
     // Check if it's a gallery
-    if (postData.media_metadata) {
-      console.log(`🎨 Found gallery with ${Object.keys(postData.media_metadata).length} items`);
+    if (postData.media_metadata || postData.gallery_data) {
+      console.log(`🎨 Found gallery with ${postData.media_metadata ? Object.keys(postData.media_metadata).length : postData.gallery_data.items.length} items`);
       
       const allItems = [];
-      for (const [mediaId, mediaData] of Object.entries(postData.media_metadata)) {
-        if (mediaData.status === 'valid') {
-          // Get the highest quality image available
-          let imageUrl = '';
-          let isAnimated = false;
-          
-          // Check for GIF/MP4 first (animated content)
-          if (mediaData.s && mediaData.s.gif) {
-            imageUrl = mediaData.s.gif.replace(/&amp;/g, '&');
-            isAnimated = true;
-          } 
-          else if (mediaData.s && mediaData.s.mp4) {
-            imageUrl = mediaData.s.mp4.replace(/&amp;/g, '&');
-            isAnimated = true;
+      
+      // Process media_metadata if available
+      if (postData.media_metadata) {
+        for (const [mediaId, mediaData] of Object.entries(postData.media_metadata)) {
+          if (mediaData.status === 'valid') {
+            // Get the highest quality image available
+            let imageUrl = '';
+            let isAnimated = false;
+            
+            // Priority 1: Direct GIF URL from mediaData.s.gif
+            if (mediaData.s && mediaData.s.gif) {
+              imageUrl = mediaData.s.gif.replace(/&amp;/g, '&');
+              isAnimated = true;
+            } 
+            // Priority 2: MP4 URL for animated content
+            else if (mediaData.s && mediaData.s.mp4) {
+              imageUrl = mediaData.s.mp4.replace(/&amp;/g, '&');
+              isAnimated = true;
+            }
+            // Priority 3: Direct image URL from mediaData.s.u
+            else if (mediaData.s && mediaData.s.u) {
+              imageUrl = mediaData.s.u.replace(/&amp;/g, '&');
+              // Check if it's a GIF
+              isAnimated = imageUrl.toLowerCase().includes('.gif') || 
+                          imageUrl.toLowerCase().includes('format=gif') ||
+                          imageUrl.toLowerCase().includes('gif');
+            }
+            
+            // If we found a URL, clean it
+            if (imageUrl) {
+              // Convert preview.redd.it to i.redd.it
+              imageUrl = convertPreviewToIreddit(imageUrl);
+              
+              allItems.push({
+                originalUrl: imageUrl,
+                cleanUrl: cleanUrl(imageUrl),
+                isAnimated: isAnimated
+              });
+            }
           }
-          // Fall back to regular image
-          else if (mediaData.s && mediaData.s.u) {
-            imageUrl = mediaData.s.u.replace(/&amp;/g, '&');
-            // Check if it's a GIF
-            isAnimated = imageUrl.toLowerCase().includes('.gif') || 
-                        imageUrl.toLowerCase().includes('format=gif') ||
-                        imageUrl.toLowerCase().includes('gif');
-          }
-          
-          if (imageUrl) {
-            allItems.push({
-              url: imageUrl,
-              cleanUrl: imageUrl.split('?')[0].trim().replace(/\/+$/, ''),
-              isAnimated: isAnimated
-            });
+        }
+      } else if (postData.gallery_data) {
+        // Fallback: if we have gallery_data but no media_metadata
+        console.log('⚠️ Using gallery_data structure (media_metadata not found)');
+        
+        // Try to get URLs from crosspost_media or preview images
+        if (postData.preview && postData.preview.images) {
+          for (const image of postData.preview.images) {
+            if (image.source && image.source.url) {
+              let imageUrl = image.source.url.replace(/&amp;/g, '&');
+              imageUrl = convertPreviewToIreddit(imageUrl);
+              
+              allItems.push({
+                originalUrl: imageUrl,
+                cleanUrl: cleanUrl(imageUrl),
+                isAnimated: imageUrl.toLowerCase().includes('.gif')
+              });
+            }
           }
         }
       }
@@ -195,23 +329,13 @@ const processRedditGallery = async (jsonUrl, message) => {
         const animatedCount = uniqueItems.filter(item => item.isAnimated).length;
         const staticCount = uniqueItems.length - animatedCount;
         
-        // Clean and prepare URLs
-        const cleanedUrls = uniqueItems.map(item => {
-          let cleanUrl = item.url.split('?')[0].trim();
-          cleanUrl = cleanUrl.replace(/\/+$/, '');
-          
-          // Convert Twitter/X links to vxtwitter.com
-          if (cleanUrl.toLowerCase().includes('x.com/') || cleanUrl.toLowerCase().includes('twitter.com/')) {
-            cleanUrl = cleanUrl.replace(/https?:\/\/(www\.)?(x\.com|twitter\.com)/i, 'https://vxtwitter.com');
-          }
-          
-          return cleanUrl;
-        });
+        // Prepare URLs for posting
+        const cleanedUrls = uniqueItems.map(item => item.cleanUrl);
         
         return {
-          title: postData.title,
-          subreddit: postData.subreddit,
-          author: postData.author,
+          title: postData.title || 'Reddit Gallery',
+          subreddit: postData.subreddit || 'unknown',
+          author: postData.author || 'unknown',
           urls: cleanedUrls,
           isGallery: true,
           galleryInfo: {
@@ -220,10 +344,17 @@ const processRedditGallery = async (jsonUrl, message) => {
             staticCount: staticCount
           }
         };
+      } else {
+        console.log('⚠️ No media items extracted from gallery');
       }
     }
   } catch (error) {
     console.error('❌ Error processing Reddit gallery:', error.message);
+    console.error('Error details:', error.response ? {
+      status: error.response.status,
+      statusText: error.response.statusText,
+      url: error.response.config.url
+    } : 'No response details');
   }
   
   return null;
@@ -296,7 +427,7 @@ client.on('messageCreate', async (message) => {
     // Check if it's a redd.it short URL
     if (urlLower.includes('redd.it/')) {
       // Clean the URL for duplicate checking
-      const cleanShortUrl = url.split('?')[0].trim().replace(/\/+$/, '');
+      const cleanShortUrl = cleanUrl(url);
       if (!seenUrls.has(cleanShortUrl)) {
         seenUrls.add(cleanShortUrl);
         redditShortUrls.push(url);
@@ -305,14 +436,14 @@ client.on('messageCreate', async (message) => {
       }
     } else {
       // Clean the URL for duplicate checking
-      const cleanUrl = url.split('?')[0].trim().replace(/\/+$/, '');
+      const cleanUrlStr = cleanUrl(url);
       
       // Skip if already seen
-      if (seenUrls.has(cleanUrl)) {
-        console.log(`🚫 Duplicate URL skipped: ${cleanUrl}`);
+      if (seenUrls.has(cleanUrlStr)) {
+        console.log(`🚫 Duplicate URL skipped: ${cleanUrlStr}`);
         continue;
       }
-      seenUrls.add(cleanUrl);
+      seenUrls.add(cleanUrlStr);
       
       // Check if URL is from Twitter/X
       const isTwitterLink = urlLower.includes('x.com/') || urlLower.includes('twitter.com/');
@@ -379,7 +510,7 @@ client.on('messageCreate', async (message) => {
             
             if (hasAllowedExtension) {
               // Clean and check for duplicates
-              const cleanFullUrl = fullUrl.split('?')[0].trim().replace(/\/+$/, '');
+              const cleanFullUrl = cleanUrl(fullUrl);
               if (!seenUrls.has(cleanFullUrl)) {
                 seenUrls.add(cleanFullUrl);
                 allowedUrls.push(fullUrl);
@@ -392,7 +523,7 @@ client.on('messageCreate', async (message) => {
               for (const website of ALLOWED_WEBSITES) {
                 if (fullUrlLower.includes(website)) {
                   isAllowedWebsite = true;
-                  const cleanFullUrl = fullUrl.split('?')[0].trim().replace(/\/+$/, '');
+                  const cleanFullUrl = cleanUrl(fullUrl);
                   if (!seenUrls.has(cleanFullUrl)) {
                     seenUrls.add(cleanFullUrl);
                     allowedUrls.push(fullUrl);
@@ -415,7 +546,7 @@ client.on('messageCreate', async (message) => {
           for (const ext of ALLOWED_EXTENSIONS) {
             if (urlLower.includes(ext)) {
               hasAllowedExtension = true;
-              const cleanShortUrl = shortUrl.split('?')[0].trim().replace(/\/+$/, '');
+              const cleanShortUrl = cleanUrl(shortUrl);
               if (!seenUrls.has(cleanShortUrl)) {
                 seenUrls.add(cleanShortUrl);
                 allowedUrls.push(shortUrl);
@@ -430,6 +561,9 @@ client.on('messageCreate', async (message) => {
             blockedUrls.push(shortUrl);
           }
         }
+        
+        // Add a small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 1000));
       } catch (error) {
         console.error(`❌ Error processing redd.it URL ${shortUrl}:`, error.message);
         blockedUrls.push(shortUrl);
@@ -492,17 +626,7 @@ client.on('messageCreate', async (message) => {
       await message.delete();
       
       // Clean and prepare regular URLs
-      const cleanedUrls = allowedUrls.map(url => {
-        let cleanUrl = url.split('?')[0].trim();
-        cleanUrl = cleanUrl.replace(/\/+$/, '');
-        
-        // Convert Twitter/X links to vxtwitter.com
-        if (cleanUrl.toLowerCase().includes('x.com/') || cleanUrl.toLowerCase().includes('twitter.com/')) {
-          cleanUrl = cleanUrl.replace(/https?:\/\/(www\.)?(x\.com|twitter\.com)/i, 'https://vxtwitter.com');
-        }
-        
-        return cleanUrl;
-      });
+      const cleanedUrls = allowedUrls.map(url => cleanUrl(url));
       
       // Determine which info to use (gallery takes priority)
       const finalTitle = galleryResult ? galleryResult.title : postInfo.title;
@@ -569,8 +693,15 @@ client.on('messageCreate', async (message) => {
             url.includes('vxtwitter.com')
           ).length;
           
+          const redditPreviewConverted = allCleanedUrls.filter(url => 
+            url.includes('i.redd.it') && url.includes('preview.redd.it')
+          ).length;
+          
           const twitterConversionInfo = twitterLinksConverted > 0 ? 
             `• ${twitterLinksConverted} Twitter/X link(s) converted to vxtwitter.com\n` : '';
+          
+          const redditConversionInfo = redditPreviewConverted > 0 ? 
+            `• ${redditPreviewConverted} Reddit preview link(s) converted to i.redd.it\n` : '';
           
           const gallerySuccessInfo = galleryResult ? 
             `• Gallery posted: ${galleryResult.urls.length} item(s)\n` : '';
@@ -587,6 +718,7 @@ client.on('messageCreate', async (message) => {
             `${duplicateSuccessInfo}` +
             `${gallerySuccessInfo}` +
             `${twitterConversionInfo}` +
+            `${redditConversionInfo}` +
             (blockedUrls.length > 0 ? `• Blocked ${blockedUrls.length} unwanted link(s)` : '')
           );
         }
