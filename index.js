@@ -52,9 +52,6 @@ const ALLOWED_WEBSITES = [
 ];
 
 const LOG_CHANNEL_ID = '1470005338483982400';
-
-// ========== TEST MODE ==========
-const TEST_MODE = process.env.TEST_MODE === 'true' || false;
 // ========== END CONFIG ==========
 
 // Define the setup function
@@ -62,13 +59,10 @@ const setupBot = () => {
   console.log(`✅ Bot online as ${client.user.tag}`);
   console.log(`🔍 Monitoring ${TARGET_BOT_IDS.length} bots`);
   console.log(`🌐 Allowed websites: ${ALLOWED_WEBSITES.join(', ') || 'None'}`);
-  console.log(`🧪 TEST MODE: ${TEST_MODE ? 'ENABLED - Processing ALL users' : 'DISABLED - Normal filtering'}`);
-  
-  const statusText = TEST_MODE ? 'TEST MODE: Processing all users' : 'Cleaning links...';
   
   client.user.setPresence({
-    activities: [{ name: statusText, type: ActivityType.Watching }],
-    status: TEST_MODE ? 'idle' : 'online'
+    activities: [{ name: 'Cleaning links...', type: ActivityType.Watching }],
+    status: 'online'
   });
 };
 
@@ -80,15 +74,10 @@ client.on('messageCreate', async (message) => {
   // Skip bot's own messages
   if (message.author.id === client.user.id) return;
   
-  // In normal mode, only process target bots
-  // In test mode, process ALL messages (except bot's own)
-  if (!TEST_MODE && !TARGET_BOT_IDS.includes(message.author.id)) return;
+  // Only process target bots
+  if (!TARGET_BOT_IDS.includes(message.author.id)) return;
   
-  const isTargetBot = TARGET_BOT_IDS.includes(message.author.id);
-  const modeLabel = TEST_MODE ? '🧪 TEST MODE' : '🔍 NORMAL MODE';
-  const userType = isTargetBot ? 'target bot' : 'regular user';
-  
-  console.log(`${modeLabel}: From ${message.author.tag} (${userType}) in #${message.channel.name}`);
+  console.log(`📨 From: ${message.author.tag} in #${message.channel.name}`);
   console.log(`📝 Original content: ${message.content}`);
   
   // Log message processing to log channel
@@ -100,11 +89,8 @@ client.on('messageCreate', async (message) => {
         ? message.content.substring(0, 1000) + '...' 
         : message.content;
       
-      const testModeNotice = TEST_MODE ? '🧪 **TEST MODE ACTIVE**\n' : '';
-      const userTypeLabel = TEST_MODE && !isTargetBot ? ' (Regular User - Test Mode Only)' : '';
-      
       await logChannel.send(
-        `${testModeNotice}🔍 Processing message from **${message.author.tag}**${userTypeLabel} in <#${message.channel.id}>\n` +
+        `🔍 Processing message from **${message.author.tag}** in <#${message.channel.id}>\n` +
         `📝 **Original content:**\n${truncatedContent}`
       );
     }
@@ -120,41 +106,35 @@ client.on('messageCreate', async (message) => {
   const allowedUrls = [];
   const blockedUrls = [];
   
-  if (TEST_MODE) {
-    // In test mode, allow ALL URLs regardless of filtering rules
-    allowedUrls.push(...allUrls);
-    console.log(`🧪 TEST MODE: Allowing all ${allUrls.length} URLs without filtering`);
-  } else {
-    // Normal filtering logic - only for target bots
-    for (const url of allUrls) {
-      const urlLower = url.toLowerCase();
-      
-      // Check if URL is from an allowed website
-      let isAllowedWebsite = false;
-      for (const website of ALLOWED_WEBSITES) {
-        if (urlLower.includes(website)) {
-          isAllowedWebsite = true;
-          allowedUrls.push(url);
-          break;
-        }
-      }
-      
-      if (isAllowedWebsite) continue;
-      
-      // Check for allowed file extensions
-      let hasAllowedExtension = false;
-      for (const ext of ALLOWED_EXTENSIONS) {
-        if (urlLower.includes(ext) || urlLower.includes(ext + '?') || urlLower.endsWith(ext)) {
-          hasAllowedExtension = true;
-          break;
-        }
-      }
-      
-      if (hasAllowedExtension) {
+  // Filter URLs based on allowed websites and extensions
+  for (const url of allUrls) {
+    const urlLower = url.toLowerCase();
+    
+    // Check if URL is from an allowed website
+    let isAllowedWebsite = false;
+    for (const website of ALLOWED_WEBSITES) {
+      if (urlLower.includes(website)) {
+        isAllowedWebsite = true;
         allowedUrls.push(url);
-      } else {
-        blockedUrls.push(url);
+        break;
       }
+    }
+    
+    if (isAllowedWebsite) continue;
+    
+    // Check for allowed file extensions
+    let hasAllowedExtension = false;
+    for (const ext of ALLOWED_EXTENSIONS) {
+      if (urlLower.includes(ext) || urlLower.includes(ext + '?') || urlLower.endsWith(ext)) {
+        hasAllowedExtension = true;
+        break;
+      }
+    }
+    
+    if (hasAllowedExtension) {
+      allowedUrls.push(url);
+    } else {
+      blockedUrls.push(url);
     }
   }
   
@@ -173,7 +153,7 @@ client.on('messageCreate', async (message) => {
     if (logChannel) {
       // Create a summary of blocked URLs (truncated if too many)
       let blockedSummary = '';
-      if (!TEST_MODE && blockedUrls.length > 0) {
+      if (blockedUrls.length > 0) {
         const blockedToShow = blockedUrls.slice(0, 3); // Show first 3 blocked URLs
         blockedSummary = `• Blocked URLs: ${blockedToShow.join(', ')}`;
         if (blockedUrls.length > 3) {
@@ -182,26 +162,22 @@ client.on('messageCreate', async (message) => {
         blockedSummary += '\n';
       }
       
-      const testModeIndicator = TEST_MODE ? '🧪 **TEST MODE ANALYSIS**\n' : '🔗 **Link Analysis:**\n';
-      const userTypeNote = TEST_MODE && !isTargetBot ? ' (Regular User - Test Mode Only)' : '';
-      
       await logChannel.send(
-        `${testModeIndicator}` +
-        `• From: **${message.author.tag}**${userTypeNote} in <#${message.channel.id}>\n` +
+        `🔗 **Link Analysis:**\n` +
+        `• From: **${message.author.tag}** in <#${message.channel.id}>\n` +
         `${subredditInfo}` +
         `• Total URLs: ${allUrls.length}\n` +
-        (TEST_MODE ? `• Allowed: ${allowedUrls.length} (ALL - Test Mode)\n` : 
-         `• Allowed: ${allowedUrls.length}\n` +
-         `• Blocked: ${blockedUrls.length}\n`) +
+        `• Allowed: ${allowedUrls.length}\n` +
+        `• Blocked: ${blockedUrls.length}\n` +
         `${blockedSummary}` +
-        `• Action: ${allowedUrls.length === 0 && !TEST_MODE ? 'Delete only' : TEST_MODE ? 'Test Mode - Allowing all' : 'Delete & repost'}`
+        `• Action: ${allowedUrls.length === 0 ? 'Delete only' : 'Delete & repost'}`
       );
     }
   } catch (error) {
     console.error('Failed to send log to log channel:', error);
   }
   
-  if (!TEST_MODE && allowedUrls.length === 0 && blockedUrls.length > 0) {
+  if (allowedUrls.length === 0 && blockedUrls.length > 0) {
     await message.delete();
     return;
   }
@@ -217,22 +193,14 @@ client.on('messageCreate', async (message) => {
         let cleanUrl = url.split('?')[0].trim();
         cleanUrl = cleanUrl.replace(/\/+$/, '');
         
-        // Check if URL is from an allowed website (not just file extensions)
-        let isFromAllowedWebsite = false;
-        for (const website of ALLOWED_WEBSITES) {
-          if (cleanUrl.toLowerCase().includes(website)) {
-            isFromAllowedWebsite = true;
-            break;
-          }
-        }
-        
-        // Format link with subreddit if available and it's from an allowed website
-        // OR use sender's username if no subreddit
-        if (isFromAllowedWebsite) {
-          const linkLabel = subreddit || senderUsername;
-          cleanedLinks.push(`[${linkLabel}](${cleanUrl})`);
+        // Format ALL allowed links with subreddit or username
+        // (not just links from ALLOWED_WEBSITES)
+        if (subreddit) {
+          // Use subreddit if available
+          cleanedLinks.push(`[${subreddit}](${cleanUrl})`);
         } else {
-          cleanedLinks.push(cleanUrl);
+          // Fall back to username if no subreddit
+          cleanedLinks.push(`[${senderUsername}](${cleanUrl})`);
         }
       }
       
@@ -248,25 +216,15 @@ client.on('messageCreate', async (message) => {
           // Add subreddit info to success log if available
           const subredditSuccessInfo = subredditInfo ? `\n${subredditInfo}` : '';
           
-          // Show how many links were formatted
-          const formattedLinksCount = allowedUrls.filter(url => {
-            for (const website of ALLOWED_WEBSITES) {
-              if (url.toLowerCase().includes(website)) return true;
-            }
-            return false;
-          }).length;
-          
-          const formattingInfo = formattedLinksCount > 0 ? 
-            `• ${formattedLinksCount} link(s) formatted with ${subreddit ? 'subreddit' : 'username'}\n` : '';
-          
-          const testModeSuccessNote = TEST_MODE ? '🧪 **TEST MODE COMPLETE**\n' : '✅ **Cleaning Complete**\n';
-          const userTypeLabel = TEST_MODE && !isTargetBot ? ' (Regular User - Test Mode Only)' : '';
+          const formattingInfo = subreddit ? 
+            `• All links formatted with subreddit: ${subreddit}\n` : 
+            `• All links formatted with username: ${senderUsername}\n`;
           
           await logChannel.send(
-            `${testModeSuccessNote}` +
-            `• Processed ${allowedUrls.length} link(s) from **${message.author.tag}**${userTypeLabel} in <#${message.channel.id}>${subredditSuccessInfo}` +
+            `✅ **Cleaning Complete**\n` +
+            `• Processed ${allowedUrls.length} link(s) from **${message.author.tag}** in <#${message.channel.id}>${subredditSuccessInfo}` +
             `${formattingInfo}` +
-            (TEST_MODE ? '' : `• Blocked ${blockedUrls.length} unwanted link(s)`)
+            `• Blocked ${blockedUrls.length} unwanted link(s)`
           );
         }
       } catch (error) {
