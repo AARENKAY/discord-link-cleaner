@@ -74,7 +74,59 @@ const resolveRedditUrl = async (shortenedUrl) => {
   }
 };
 
-const processRedditGallery = async (jsonUrl, message, subreddit, senderUsername) => {
+// ========== MESSAGE FORMATTING FUNCTIONS ==========
+const formatConsolidatedMessage = (title, subreddit, author, urls, isGallery = false, galleryInfo = null) => {
+  let message = `**${title}**\n\n`;
+  message += `*Posted in r/${subreddit} by ${author}*\n\n`;
+  
+  if (isGallery && galleryInfo) {
+    const { totalItems, animatedCount, staticCount } = galleryInfo;
+    
+    if (animatedCount > 0 && staticCount > 0) {
+      message += `*Gallery:* ${totalItems} images (${animatedCount} GIFs, ${staticCount} static)\n\n`;
+    } else if (animatedCount > 0) {
+      message += `*Gallery:* ${totalItems} GIF${totalItems > 1 ? 's' : ''}\n\n`;
+    } else {
+      message += `*Gallery:* ${totalItems} image${totalItems > 1 ? 's' : ''}\n\n`;
+    }
+  } else if (urls.length > 1) {
+    message += `*Images:* ${urls.length}\n\n`;
+  }
+  
+  // Add all URLs
+  for (const url of urls) {
+    message += `${url}\n`;
+  }
+  
+  return message;
+};
+
+const formatSingleLinkMessage = (title, subreddit, author, url) => {
+  let message = `**${title}**\n\n`;
+  message += `*Posted in r/${subreddit} by ${author}*\n\n`;
+  message += `${url}`;
+  
+  return message;
+};
+
+const extractPostInfoFromMessage = (messageContent) => {
+  // Try to extract title from common Reddit bot formats
+  const titlePattern = /\*\*(.*?)\*\*/; // Look for bold text (common in Reddit bot titles)
+  const subredditPattern = /r\/([\w]+)/i;
+  const authorPattern = /\*by\s+([\w-]+)\*/i; // Matches "*by username*"
+  
+  const titleMatch = messageContent.match(titlePattern);
+  const subredditMatch = messageContent.match(subredditPattern);
+  const authorMatch = messageContent.match(authorPattern);
+  
+  return {
+    title: titleMatch ? titleMatch[1].trim() : 'Reddit Post',
+    subreddit: subredditMatch ? subredditMatch[1] : 'unknown',
+    author: authorMatch ? authorMatch[1] : 'unknown'
+  };
+};
+
+const processRedditGallery = async (jsonUrl, message) => {
   try {
     console.log(`🎨 Processing Reddit gallery: ${jsonUrl}`);
     
@@ -85,61 +137,89 @@ const processRedditGallery = async (jsonUrl, message, subreddit, senderUsername)
     if (postData.media_metadata) {
       console.log(`🎨 Found gallery with ${Object.keys(postData.media_metadata).length} items`);
       
-      const imageUrls = [];
+      const allItems = [];
       for (const [mediaId, mediaData] of Object.entries(postData.media_metadata)) {
         if (mediaData.status === 'valid') {
           // Get the highest quality image available
           let imageUrl = '';
-          if (mediaData.s && mediaData.s.u) {
+          let isAnimated = false;
+          
+          // Check for GIF/MP4 first (animated content)
+          if (mediaData.s && mediaData.s.gif) {
+            imageUrl = mediaData.s.gif.replace(/&amp;/g, '&');
+            isAnimated = true;
+          } 
+          else if (mediaData.s && mediaData.s.mp4) {
+            imageUrl = mediaData.s.mp4.replace(/&amp;/g, '&');
+            isAnimated = true;
+          }
+          // Fall back to regular image
+          else if (mediaData.s && mediaData.s.u) {
             imageUrl = mediaData.s.u.replace(/&amp;/g, '&');
-          } else if (mediaData.p && mediaData.p.length > 0) {
-            imageUrl = mediaData.p[mediaData.p.length - 1].u.replace(/&amp;/g, '&');
+            // Check if it's a GIF
+            isAnimated = imageUrl.toLowerCase().includes('.gif') || 
+                        imageUrl.toLowerCase().includes('format=gif') ||
+                        imageUrl.toLowerCase().includes('gif');
           }
           
           if (imageUrl) {
-            imageUrls.push({
+            allItems.push({
               url: imageUrl,
-              caption: postData.title
+              cleanUrl: imageUrl.split('?')[0].trim().replace(/\/+$/, ''),
+              isAnimated: isAnimated
             });
           }
         }
       }
       
-      if (imageUrls.length > 0) {
-        console.log(`🎨 Extracted ${imageUrls.length} images from gallery`);
+      if (allItems.length > 0) {
+        console.log(`🎨 Extracted ${allItems.length} items (${allItems.filter(item => item.isAnimated).length} animated)`);
         
-        // Create embeds for each image
-        const embeds = [];
-        for (const [index, imageData] of imageUrls.entries()) {
-          const embed = new EmbedBuilder()
-            .setColor('#FF4500') // Reddit orange
-            .setTitle(postData.title)
-            .setURL(jsonUrl.replace('.json', ''))
-            .setDescription(imageUrls.length > 1 ? `Image ${index + 1} of ${imageUrls.length}` : '')
-            .setImage(imageData.url)
-            .setFooter({ 
-              text: `r/${postData.subreddit} • Posted by ${postData.author}` 
-            });
-          
-          embeds.push(embed);
-        }
+        // Check for duplicates within the gallery
+        const uniqueItems = [];
+        const seenUrls = new Set();
         
-        // Log gallery processing
-        try {
-          const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
-          if (logChannel) {
-            await logChannel.send(
-              `🎨 **Reddit Gallery Processed**\n` +
-              `• From: **${message.author.tag}** in <#${message.channel.id}>\n` +
-              `• Gallery: r/${postData.subreddit} - ${postData.title}\n` +
-              `• Images: ${imageUrls.length}`
-            );
+        for (const item of allItems) {
+          if (!seenUrls.has(item.cleanUrl)) {
+            seenUrls.add(item.cleanUrl);
+            uniqueItems.push(item);
+          } else {
+            console.log(`🚫 Duplicate URL skipped: ${item.cleanUrl}`);
           }
-        } catch (error) {
-          console.error('Failed to send gallery log:', error);
         }
         
-        return embeds;
+        if (uniqueItems.length < allItems.length) {
+          console.log(`🚫 Removed ${allItems.length - uniqueItems.length} duplicate(s) from gallery`);
+        }
+        
+        const animatedCount = uniqueItems.filter(item => item.isAnimated).length;
+        const staticCount = uniqueItems.length - animatedCount;
+        
+        // Clean and prepare URLs
+        const cleanedUrls = uniqueItems.map(item => {
+          let cleanUrl = item.url.split('?')[0].trim();
+          cleanUrl = cleanUrl.replace(/\/+$/, '');
+          
+          // Convert Twitter/X links to vxtwitter.com
+          if (cleanUrl.toLowerCase().includes('x.com/') || cleanUrl.toLowerCase().includes('twitter.com/')) {
+            cleanUrl = cleanUrl.replace(/https?:\/\/(www\.)?(x\.com|twitter\.com)/i, 'https://vxtwitter.com');
+          }
+          
+          return cleanUrl;
+        });
+        
+        return {
+          title: postData.title,
+          subreddit: postData.subreddit,
+          author: postData.author,
+          urls: cleanedUrls,
+          isGallery: true,
+          galleryInfo: {
+            totalItems: uniqueItems.length,
+            animatedCount: animatedCount,
+            staticCount: staticCount
+          }
+        };
       }
     }
   } catch (error) {
@@ -201,7 +281,13 @@ client.on('messageCreate', async (message) => {
   const allowedUrls = [];
   const blockedUrls = [];
   const redditShortUrls = [];
-  const galleryEmbeds = [];
+  
+  // Track seen URLs to avoid duplicates
+  const seenUrls = new Set();
+  
+  // Extract post info from original message
+  const postInfo = extractPostInfoFromMessage(message.content);
+  let galleryResult = null;
   
   // First, separate redd.it short URLs
   for (const url of allUrls) {
@@ -209,8 +295,25 @@ client.on('messageCreate', async (message) => {
     
     // Check if it's a redd.it short URL
     if (urlLower.includes('redd.it/')) {
-      redditShortUrls.push(url);
+      // Clean the URL for duplicate checking
+      const cleanShortUrl = url.split('?')[0].trim().replace(/\/+$/, '');
+      if (!seenUrls.has(cleanShortUrl)) {
+        seenUrls.add(cleanShortUrl);
+        redditShortUrls.push(url);
+      } else {
+        console.log(`🚫 Duplicate redd.it URL skipped: ${cleanShortUrl}`);
+      }
     } else {
+      // Clean the URL for duplicate checking
+      const cleanUrl = url.split('?')[0].trim().replace(/\/+$/, '');
+      
+      // Skip if already seen
+      if (seenUrls.has(cleanUrl)) {
+        console.log(`🚫 Duplicate URL skipped: ${cleanUrl}`);
+        continue;
+      }
+      seenUrls.add(cleanUrl);
+      
       // Check if URL is from Twitter/X
       const isTwitterLink = urlLower.includes('x.com/') || urlLower.includes('twitter.com/');
       
@@ -260,12 +363,9 @@ client.on('messageCreate', async (message) => {
           const { fullUrl, jsonUrl } = resolved;
           
           // Try to process as gallery first
-          const embeds = await processRedditGallery(jsonUrl, message, null, message.author.username);
+          galleryResult = await processRedditGallery(jsonUrl, message);
           
-          if (embeds && embeds.length > 0) {
-            // Add to gallery embeds
-            galleryEmbeds.push(...embeds);
-          } else {
+          if (!galleryResult) {
             // Not a gallery, treat as regular URL
             // Check if the resolved URL has allowed extensions
             const fullUrlLower = fullUrl.toLowerCase();
@@ -278,14 +378,27 @@ client.on('messageCreate', async (message) => {
             }
             
             if (hasAllowedExtension) {
-              allowedUrls.push(fullUrl); // Use the resolved full URL
+              // Clean and check for duplicates
+              const cleanFullUrl = fullUrl.split('?')[0].trim().replace(/\/+$/, '');
+              if (!seenUrls.has(cleanFullUrl)) {
+                seenUrls.add(cleanFullUrl);
+                allowedUrls.push(fullUrl);
+              } else {
+                console.log(`🚫 Duplicate resolved URL skipped: ${cleanFullUrl}`);
+              }
             } else {
               // Check if the domain is in allowed websites
               let isAllowedWebsite = false;
               for (const website of ALLOWED_WEBSITES) {
                 if (fullUrlLower.includes(website)) {
                   isAllowedWebsite = true;
-                  allowedUrls.push(fullUrl);
+                  const cleanFullUrl = fullUrl.split('?')[0].trim().replace(/\/+$/, '');
+                  if (!seenUrls.has(cleanFullUrl)) {
+                    seenUrls.add(cleanFullUrl);
+                    allowedUrls.push(fullUrl);
+                  } else {
+                    console.log(`🚫 Duplicate resolved URL skipped: ${cleanFullUrl}`);
+                  }
                   break;
                 }
               }
@@ -302,7 +415,13 @@ client.on('messageCreate', async (message) => {
           for (const ext of ALLOWED_EXTENSIONS) {
             if (urlLower.includes(ext)) {
               hasAllowedExtension = true;
-              allowedUrls.push(shortUrl);
+              const cleanShortUrl = shortUrl.split('?')[0].trim().replace(/\/+$/, '');
+              if (!seenUrls.has(cleanShortUrl)) {
+                seenUrls.add(cleanShortUrl);
+                allowedUrls.push(shortUrl);
+              } else {
+                console.log(`🚫 Duplicate unresolved URL skipped: ${cleanShortUrl}`);
+              }
               break;
             }
           }
@@ -318,16 +437,7 @@ client.on('messageCreate', async (message) => {
     }
   }
   
-  // Extract subreddit info if present (e.g., "r/aww" or "/r/aww")
-  const subredditPattern = /(?:\/?r\/)([\w]+)/gi;
-  const subredditMatches = message.content.match(subredditPattern);
-  const subreddit = subredditMatches ? subredditMatches[0].replace(/^\/?/, '') : null; // Get first subreddit, clean slashes
-  const subredditInfo = subredditMatches ? `• Subreddit(s): ${subredditMatches.join(', ')}\n` : '';
-  
-  // Get sender's username for formatting (without discriminator if present)
-  const senderUsername = message.author.username;
-  
-  // Log link analysis results with original content details
+  // Log link analysis results
   try {
     const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
     if (logChannel) {
@@ -345,106 +455,138 @@ client.on('messageCreate', async (message) => {
       const redditProcessedInfo = redditShortUrls.length > 0 ? 
         `• Reddit short URLs: ${redditShortUrls.length} processed\n` : '';
       
-      const galleryInfo = galleryEmbeds.length > 0 ? 
-        `• Gallery images: ${galleryEmbeds.length} found\n` : '';
+      const galleryInfo = galleryResult ? 
+        `• Gallery detected: ${galleryResult.urls.length} items\n` : '';
+      
+      const duplicateInfo = allUrls.length > (allowedUrls.length + blockedUrls.length + (galleryResult ? galleryResult.urls.length : 0)) ?
+        `• Duplicates removed: ${allUrls.length - (allowedUrls.length + blockedUrls.length + (galleryResult ? galleryResult.urls.length : 0))}\n` : '';
       
       await logChannel.send(
         `🔗 **Link Analysis:**\n` +
         `• From: **${message.author.tag}** in <#${message.channel.id}>\n` +
-        `${subredditInfo}` +
-        `• Total URLs: ${allUrls.length}\n` +
-        `• Allowed: ${allowedUrls.length}\n` +
+        `• Title: ${galleryResult ? galleryResult.title : postInfo.title}\n` +
+        `• Subreddit: r/${galleryResult ? galleryResult.subreddit : postInfo.subreddit}\n` +
+        `• Author: ${galleryResult ? galleryResult.author : postInfo.author}\n` +
+        `• Total URLs found: ${allUrls.length}\n` +
+        `• Unique URLs processed: ${allowedUrls.length + blockedUrls.length + (galleryResult ? galleryResult.urls.length : 0)}\n` +
+        `${duplicateInfo}` +
+        `• Allowed: ${allowedUrls.length + (galleryResult ? galleryResult.urls.length : 0)}\n` +
         `• Blocked: ${blockedUrls.length}\n` +
         `${redditProcessedInfo}` +
         `${galleryInfo}` +
         `${blockedSummary}` +
-        `• Action: ${allowedUrls.length === 0 && galleryEmbeds.length === 0 ? 'Delete only' : 'Delete & repost'}`
+        `• Action: ${allowedUrls.length === 0 && !galleryResult ? 'Delete only' : 'Delete & repost'}`
       );
     }
   } catch (error) {
     console.error('Failed to send log to log channel:', error);
   }
   
-  if (allowedUrls.length === 0 && galleryEmbeds.length === 0 && blockedUrls.length > 0) {
+  if (allowedUrls.length === 0 && !galleryResult && blockedUrls.length > 0) {
     await message.delete();
     return;
   }
   
-  if (allowedUrls.length > 0 || galleryEmbeds.length > 0) {
+  if (allowedUrls.length > 0 || galleryResult) {
     try {
       await message.delete();
       
-      // Send gallery embeds first (if any)
-      if (galleryEmbeds.length > 0) {
-        console.log(`🎨 Sending ${galleryEmbeds.length} gallery embeds`);
-        // Discord has a limit of 10 embeds per message
-        const embedChunks = [];
-        for (let i = 0; i < galleryEmbeds.length; i += 10) {
-          embedChunks.push(galleryEmbeds.slice(i, i + 10));
+      // Clean and prepare regular URLs
+      const cleanedUrls = allowedUrls.map(url => {
+        let cleanUrl = url.split('?')[0].trim();
+        cleanUrl = cleanUrl.replace(/\/+$/, '');
+        
+        // Convert Twitter/X links to vxtwitter.com
+        if (cleanUrl.toLowerCase().includes('x.com/') || cleanUrl.toLowerCase().includes('twitter.com/')) {
+          cleanUrl = cleanUrl.replace(/https?:\/\/(www\.)?(x\.com|twitter\.com)/i, 'https://vxtwitter.com');
         }
         
-        for (const chunk of embedChunks) {
-          await message.channel.send({ embeds: chunk });
+        return cleanUrl;
+      });
+      
+      // Determine which info to use (gallery takes priority)
+      const finalTitle = galleryResult ? galleryResult.title : postInfo.title;
+      const finalSubreddit = galleryResult ? galleryResult.subreddit : postInfo.subreddit;
+      const finalAuthor = galleryResult ? galleryResult.author : postInfo.author;
+      
+      // Combine gallery URLs and regular URLs
+      const allCleanedUrls = galleryResult ? 
+        [...galleryResult.urls, ...cleanedUrls] : 
+        cleanedUrls;
+      
+      // Remove any duplicates between gallery and regular URLs
+      const uniqueCleanedUrls = [];
+      const finalSeenUrls = new Set();
+      
+      for (const url of allCleanedUrls) {
+        if (!finalSeenUrls.has(url)) {
+          finalSeenUrls.add(url);
+          uniqueCleanedUrls.push(url);
         }
       }
       
-      // Send all cleaned regular links in one message for better organization
-      if (allowedUrls.length > 0) {
-        const cleanedLinks = [];
+      if (uniqueCleanedUrls.length > 0) {
+        // Format and send the message
+        let formattedMessage;
         
-        for (const url of allowedUrls) {
-          let cleanUrl = url.split('?')[0].trim();
-          cleanUrl = cleanUrl.replace(/\/+$/, '');
-          
-          // Convert Twitter/X links to vxtwitter.com
-          if (cleanUrl.toLowerCase().includes('x.com/') || cleanUrl.toLowerCase().includes('twitter.com/')) {
-            cleanUrl = cleanUrl.replace(/https?:\/\/(www\.)?(x\.com|twitter\.com)/i, 'https://vxtwitter.com');
-          }
-          
-          // Format ALL allowed links with subreddit or username
-          if (subreddit) {
-            // Use subreddit if available
-            cleanedLinks.push(`[${subreddit}](${cleanUrl})`);
-          } else {
-            // Fall back to username if no subreddit
-            cleanedLinks.push(`[${senderUsername}](${cleanUrl})`);
-          }
+        if (galleryResult && uniqueCleanedUrls.length === galleryResult.urls.length) {
+          // If only gallery URLs (or gallery + no additional regular URLs)
+          formattedMessage = formatConsolidatedMessage(
+            finalTitle,
+            finalSubreddit,
+            finalAuthor,
+            uniqueCleanedUrls,
+            galleryResult.isGallery,
+            galleryResult.galleryInfo
+          );
+        } else if (uniqueCleanedUrls.length === 1) {
+          // Single URL
+          formattedMessage = formatSingleLinkMessage(
+            finalTitle,
+            finalSubreddit,
+            finalAuthor,
+            uniqueCleanedUrls[0]
+          );
+        } else {
+          // Multiple URLs (mixed gallery and regular)
+          formattedMessage = formatConsolidatedMessage(
+            finalTitle,
+            finalSubreddit,
+            finalAuthor,
+            uniqueCleanedUrls,
+            false // Not a pure gallery
+          );
         }
         
-        // Send all links in one message
-        if (cleanedLinks.length > 0) {
-          await message.channel.send(cleanedLinks.join('\n'));
-        }
+        await message.channel.send(formattedMessage);
       }
       
       // Log successful cleaning
       try {
         const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
         if (logChannel) {
-          // Add subreddit info to success log if available
-          const subredditSuccessInfo = subredditInfo ? `\n${subredditInfo}` : '';
-          
-          // Check if any Twitter links were converted
-          const twitterLinksConverted = allowedUrls.filter(url => 
-            url.toLowerCase().includes('x.com/') || url.toLowerCase().includes('twitter.com/')
+          const twitterLinksConverted = cleanedUrls.filter(url => 
+            url.includes('vxtwitter.com')
           ).length;
           
           const twitterConversionInfo = twitterLinksConverted > 0 ? 
             `• ${twitterLinksConverted} Twitter/X link(s) converted to vxtwitter.com\n` : '';
           
-          const gallerySuccessInfo = galleryEmbeds.length > 0 ? 
-            `• ${galleryEmbeds.length} gallery image(s) posted as embeds\n` : '';
+          const gallerySuccessInfo = galleryResult ? 
+            `• Gallery posted: ${galleryResult.urls.length} item(s)\n` : '';
           
-          const formattingInfo = subreddit ? 
-            `• Links formatted with subreddit: ${subreddit}\n` : 
-            allowedUrls.length > 0 ? `• Links formatted with username: ${senderUsername}\n` : '';
+          const duplicateSuccessInfo = allUrls.length > uniqueCleanedUrls.length ?
+            `• ${allUrls.length - uniqueCleanedUrls.length} duplicate(s) removed\n` : '';
           
           await logChannel.send(
             `✅ **Cleaning Complete**\n` +
-            `• Processed ${allowedUrls.length + galleryEmbeds.length} item(s) from **${message.author.tag}** in <#${message.channel.id}>${subredditSuccessInfo}` +
+            `• Processed ${uniqueCleanedUrls.length} unique item(s) from **${message.author.tag}** in <#${message.channel.id}>\n` +
+            `• Title: ${finalTitle}\n` +
+            `• Subreddit: r/${finalSubreddit}\n` +
+            `• Author: ${finalAuthor}\n` +
+            `${duplicateSuccessInfo}` +
             `${gallerySuccessInfo}` +
             `${twitterConversionInfo}` +
-            `${formattingInfo}` +
             (blockedUrls.length > 0 ? `• Blocked ${blockedUrls.length} unwanted link(s)` : '')
           );
         }
