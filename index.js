@@ -44,6 +44,8 @@ const TARGET_BOT_IDS = [
 const ALLOWED_EXTENSIONS = [
   '.mp4', '.gif', '.gifv', '.webm', '.jpg', '.jpeg', '.png', '.webp'
 ];
+
+const LOG_CHANNEL_ID = '1470005338483982400'; // Added log channel ID
 // ========== END CONFIG ==========
 
 client.once('ready', () => {
@@ -61,6 +63,16 @@ client.on('messageCreate', async (message) => {
   if (!TARGET_BOT_IDS.includes(message.author.id)) return;
   
   console.log(`📨 From: ${message.author.tag} in #${message.channel.name}`);
+  
+  // Log message processing to log channel
+  try {
+    const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
+    if (logChannel) {
+      await logChannel.send(`🔍 Processing message from **${message.author.tag}** in <#${message.channel.id}>`);
+    }
+  } catch (error) {
+    console.error('Failed to send log to log channel:', error);
+  }
   
   const urlPattern = /https?:\/\/[^\s<>\"]+/gi;
   const allUrls = message.content.match(urlPattern);
@@ -93,6 +105,22 @@ client.on('messageCreate', async (message) => {
     }
   }
   
+  // Log link analysis results
+  try {
+    const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
+    if (logChannel) {
+      await logChannel.send(
+        `🔗 Link Analysis:\n` +
+        `• Total URLs: ${allUrls.length}\n` +
+        `• Allowed: ${allowedUrls.length}\n` +
+        `• Blocked: ${blockedUrls.length}\n` +
+        `• Action: ${allowedUrls.length === 0 ? 'Delete only' : 'Delete & repost'}`
+      );
+    }
+  } catch (error) {
+    console.error('Failed to send log to log channel:', error);
+  }
+  
   if (allowedUrls.length === 0 && blockedUrls.length > 0) {
     await message.delete();
     return;
@@ -106,8 +134,32 @@ client.on('messageCreate', async (message) => {
         cleanUrl = cleanUrl.replace(/\/+$/, '');
         await message.channel.send(cleanUrl);
       }
+      
+      // Log successful cleaning
+      try {
+        const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
+        if (logChannel) {
+          await logChannel.send(
+            `✅ Cleaned ${allowedUrls.length} link(s) from **${message.author.tag}** in <#${message.channel.id}>\n` +
+            `Blocked ${blockedUrls.length} unwanted link(s)`
+          );
+        }
+      } catch (error) {
+        console.error('Failed to send completion log:', error);
+      }
+      
     } catch (error) {
       console.error(`Error: ${error.message}`);
+      
+      // Log errors
+      try {
+        const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
+        if (logChannel) {
+          await logChannel.send(`❌ Error processing message: ${error.message}`);
+        }
+      } catch (logError) {
+        console.error('Failed to send error log:', logError);
+      }
     }
   }
 });
