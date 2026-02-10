@@ -1,5 +1,6 @@
 const express = require('express');
-const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
+const { Client, GatewayIntentBits, ActivityType, EmbedBuilder } = require('discord.js');
+const axios = require('axios');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -54,6 +55,100 @@ const ALLOWED_WEBSITES = [
 const LOG_CHANNEL_ID = '1470005338483982400';
 // ========== END CONFIG ==========
 
+// ========== REDDIT URL RESOLVER ==========
+const resolveRedditUrl = async (shortenedUrl) => {
+  try {
+    // Make a request to the shortened URL
+    const response = await axios.get(shortenedUrl, { maxRedirects: 5 });
+    
+    // Extract the full post URL from the redirection headers
+    const fullUrl = response.request.res.responseUrl;
+    console.log(`🔄 Resolved URL: ${shortenedUrl} -> ${fullUrl}`);
+
+    // Get the full post data as JSON
+    const jsonUrl = `${fullUrl}.json`;
+    return { fullUrl, jsonUrl };
+  } catch (error) {
+    console.error('❌ Error resolving Reddit URL:', error.message);
+    return null;
+  }
+};
+
+const processRedditGallery = async (jsonUrl, message, subreddit, senderUsername) => {
+  try {
+    console.log(`🎨 Processing Reddit gallery: ${jsonUrl}`);
+    
+    const response = await axios.get(jsonUrl);
+    const postData = response.data[0].data.children[0].data;
+    
+    // Check if it's a gallery
+    if (postData.media_metadata) {
+      console.log(`🎨 Found gallery with ${Object.keys(postData.media_metadata).length} items`);
+      
+      const imageUrls = [];
+      for (const [mediaId, mediaData] of Object.entries(postData.media_metadata)) {
+        if (mediaData.status === 'valid') {
+          // Get the highest quality image available
+          let imageUrl = '';
+          if (mediaData.s && mediaData.s.u) {
+            imageUrl = mediaData.s.u.replace(/&amp;/g, '&');
+          } else if (mediaData.p && mediaData.p.length > 0) {
+            imageUrl = mediaData.p[mediaData.p.length - 1].u.replace(/&amp;/g, '&');
+          }
+          
+          if (imageUrl) {
+            imageUrls.push({
+              url: imageUrl,
+              caption: postData.title
+            });
+          }
+        }
+      }
+      
+      if (imageUrls.length > 0) {
+        console.log(`🎨 Extracted ${imageUrls.length} images from gallery`);
+        
+        // Create embeds for each image
+        const embeds = [];
+        for (const [index, imageData] of imageUrls.entries()) {
+          const embed = new EmbedBuilder()
+            .setColor('#FF4500') // Reddit orange
+            .setTitle(postData.title)
+            .setURL(jsonUrl.replace('.json', ''))
+            .setDescription(imageUrls.length > 1 ? `Image ${index + 1} of ${imageUrls.length}` : '')
+            .setImage(imageData.url)
+            .setFooter({ 
+              text: `r/${postData.subreddit} • Posted by ${postData.author}` 
+            });
+          
+          embeds.push(embed);
+        }
+        
+        // Log gallery processing
+        try {
+          const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
+          if (logChannel) {
+            await logChannel.send(
+              `🎨 **Reddit Gallery Processed**\n` +
+              `• From: **${message.author.tag}** in <#${message.channel.id}>\n` +
+              `• Gallery: r/${postData.subreddit} - ${postData.title}\n` +
+              `• Images: ${imageUrls.length}`
+            );
+          }
+        } catch (error) {
+          console.error('Failed to send gallery log:', error);
+        }
+        
+        return embeds;
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error processing Reddit gallery:', error.message);
+  }
+  
+  return null;
+};
+
 // Define the setup function
 const setupBot = () => {
   console.log(`✅ Bot online as ${client.user.tag}`);
@@ -105,45 +200,121 @@ client.on('messageCreate', async (message) => {
   
   const allowedUrls = [];
   const blockedUrls = [];
+  const redditShortUrls = [];
+  const galleryEmbeds = [];
   
-  // Filter URLs based on allowed websites and extensions
+  // First, separate redd.it short URLs
   for (const url of allUrls) {
     const urlLower = url.toLowerCase();
     
-    // Check if URL is from Twitter/X
-    const isTwitterLink = urlLower.includes('x.com/') || urlLower.includes('twitter.com/');
-    
-    // Twitter/X links are always allowed (they'll be converted to vxtwitter)
-    if (isTwitterLink) {
-      allowedUrls.push(url);
-      continue;
-    }
-    
-    // Check if URL is from an allowed website
-    let isAllowedWebsite = false;
-    for (const website of ALLOWED_WEBSITES) {
-      if (urlLower.includes(website)) {
-        isAllowedWebsite = true;
-        allowedUrls.push(url);
-        break;
-      }
-    }
-    
-    if (isAllowedWebsite) continue;
-    
-    // Check for allowed file extensions
-    let hasAllowedExtension = false;
-    for (const ext of ALLOWED_EXTENSIONS) {
-      if (urlLower.includes(ext) || urlLower.includes(ext + '?') || urlLower.endsWith(ext)) {
-        hasAllowedExtension = true;
-        break;
-      }
-    }
-    
-    if (hasAllowedExtension) {
-      allowedUrls.push(url);
+    // Check if it's a redd.it short URL
+    if (urlLower.includes('redd.it/')) {
+      redditShortUrls.push(url);
     } else {
-      blockedUrls.push(url);
+      // Check if URL is from Twitter/X
+      const isTwitterLink = urlLower.includes('x.com/') || urlLower.includes('twitter.com/');
+      
+      // Twitter/X links are always allowed (they'll be converted to vxtwitter)
+      if (isTwitterLink) {
+        allowedUrls.push(url);
+        continue;
+      }
+      
+      // Check if URL is from an allowed website
+      let isAllowedWebsite = false;
+      for (const website of ALLOWED_WEBSITES) {
+        if (urlLower.includes(website)) {
+          isAllowedWebsite = true;
+          allowedUrls.push(url);
+          break;
+        }
+      }
+      
+      if (isAllowedWebsite) continue;
+      
+      // Check for allowed file extensions
+      let hasAllowedExtension = false;
+      for (const ext of ALLOWED_EXTENSIONS) {
+        if (urlLower.includes(ext) || urlLower.includes(ext + '?') || urlLower.endsWith(ext)) {
+          hasAllowedExtension = true;
+          break;
+        }
+      }
+      
+      if (hasAllowedExtension) {
+        allowedUrls.push(url);
+      } else {
+        blockedUrls.push(url);
+      }
+    }
+  }
+  
+  // Process redd.it URLs
+  if (redditShortUrls.length > 0) {
+    console.log(`🔄 Processing ${redditShortUrls.length} redd.it short URLs`);
+    
+    for (const shortUrl of redditShortUrls) {
+      try {
+        const resolved = await resolveRedditUrl(shortUrl);
+        if (resolved) {
+          const { fullUrl, jsonUrl } = resolved;
+          
+          // Try to process as gallery first
+          const embeds = await processRedditGallery(jsonUrl, message, null, message.author.username);
+          
+          if (embeds && embeds.length > 0) {
+            // Add to gallery embeds
+            galleryEmbeds.push(...embeds);
+          } else {
+            // Not a gallery, treat as regular URL
+            // Check if the resolved URL has allowed extensions
+            const fullUrlLower = fullUrl.toLowerCase();
+            let hasAllowedExtension = false;
+            for (const ext of ALLOWED_EXTENSIONS) {
+              if (fullUrlLower.includes(ext) || fullUrlLower.includes(ext + '?') || fullUrlLower.endsWith(ext)) {
+                hasAllowedExtension = true;
+                break;
+              }
+            }
+            
+            if (hasAllowedExtension) {
+              allowedUrls.push(fullUrl); // Use the resolved full URL
+            } else {
+              // Check if the domain is in allowed websites
+              let isAllowedWebsite = false;
+              for (const website of ALLOWED_WEBSITES) {
+                if (fullUrlLower.includes(website)) {
+                  isAllowedWebsite = true;
+                  allowedUrls.push(fullUrl);
+                  break;
+                }
+              }
+              
+              if (!isAllowedWebsite) {
+                blockedUrls.push(shortUrl);
+              }
+            }
+          }
+        } else {
+          // If can't resolve, treat as regular URL for filtering
+          const urlLower = shortUrl.toLowerCase();
+          let hasAllowedExtension = false;
+          for (const ext of ALLOWED_EXTENSIONS) {
+            if (urlLower.includes(ext)) {
+              hasAllowedExtension = true;
+              allowedUrls.push(shortUrl);
+              break;
+            }
+          }
+          
+          if (!hasAllowedExtension) {
+            blockedUrls.push(shortUrl);
+          }
+        }
+      } catch (error) {
+        console.error(`❌ Error processing redd.it URL ${shortUrl}:`, error.message);
+        blockedUrls.push(shortUrl);
+      }
     }
   }
   
@@ -171,6 +342,12 @@ client.on('messageCreate', async (message) => {
         blockedSummary += '\n';
       }
       
+      const redditProcessedInfo = redditShortUrls.length > 0 ? 
+        `• Reddit short URLs: ${redditShortUrls.length} processed\n` : '';
+      
+      const galleryInfo = galleryEmbeds.length > 0 ? 
+        `• Gallery images: ${galleryEmbeds.length} found\n` : '';
+      
       await logChannel.send(
         `🔗 **Link Analysis:**\n` +
         `• From: **${message.author.tag}** in <#${message.channel.id}>\n` +
@@ -178,48 +355,66 @@ client.on('messageCreate', async (message) => {
         `• Total URLs: ${allUrls.length}\n` +
         `• Allowed: ${allowedUrls.length}\n` +
         `• Blocked: ${blockedUrls.length}\n` +
+        `${redditProcessedInfo}` +
+        `${galleryInfo}` +
         `${blockedSummary}` +
-        `• Action: ${allowedUrls.length === 0 ? 'Delete only' : 'Delete & repost'}`
+        `• Action: ${allowedUrls.length === 0 && galleryEmbeds.length === 0 ? 'Delete only' : 'Delete & repost'}`
       );
     }
   } catch (error) {
     console.error('Failed to send log to log channel:', error);
   }
   
-  if (allowedUrls.length === 0 && blockedUrls.length > 0) {
+  if (allowedUrls.length === 0 && galleryEmbeds.length === 0 && blockedUrls.length > 0) {
     await message.delete();
     return;
   }
   
-  if (allowedUrls.length > 0) {
+  if (allowedUrls.length > 0 || galleryEmbeds.length > 0) {
     try {
       await message.delete();
       
-      // Send all cleaned links in one message for better organization
-      const cleanedLinks = [];
-      
-      for (const url of allowedUrls) {
-        let cleanUrl = url.split('?')[0].trim();
-        cleanUrl = cleanUrl.replace(/\/+$/, '');
-        
-        // Convert Twitter/X links to vxtwitter.com
-        if (cleanUrl.toLowerCase().includes('x.com/') || cleanUrl.toLowerCase().includes('twitter.com/')) {
-          cleanUrl = cleanUrl.replace(/https?:\/\/(www\.)?(x\.com|twitter\.com)/i, 'https://vxtwitter.com');
+      // Send gallery embeds first (if any)
+      if (galleryEmbeds.length > 0) {
+        console.log(`🎨 Sending ${galleryEmbeds.length} gallery embeds`);
+        // Discord has a limit of 10 embeds per message
+        const embedChunks = [];
+        for (let i = 0; i < galleryEmbeds.length; i += 10) {
+          embedChunks.push(galleryEmbeds.slice(i, i + 10));
         }
         
-        // Format ALL allowed links with subreddit or username
-        if (subreddit) {
-          // Use subreddit if available
-          cleanedLinks.push(`[${subreddit}](${cleanUrl})`);
-        } else {
-          // Fall back to username if no subreddit
-          cleanedLinks.push(`[${senderUsername}](${cleanUrl})`);
+        for (const chunk of embedChunks) {
+          await message.channel.send({ embeds: chunk });
         }
       }
       
-      // Send all links in one message
-      if (cleanedLinks.length > 0) {
-        await message.channel.send(cleanedLinks.join('\n'));
+      // Send all cleaned regular links in one message for better organization
+      if (allowedUrls.length > 0) {
+        const cleanedLinks = [];
+        
+        for (const url of allowedUrls) {
+          let cleanUrl = url.split('?')[0].trim();
+          cleanUrl = cleanUrl.replace(/\/+$/, '');
+          
+          // Convert Twitter/X links to vxtwitter.com
+          if (cleanUrl.toLowerCase().includes('x.com/') || cleanUrl.toLowerCase().includes('twitter.com/')) {
+            cleanUrl = cleanUrl.replace(/https?:\/\/(www\.)?(x\.com|twitter\.com)/i, 'https://vxtwitter.com');
+          }
+          
+          // Format ALL allowed links with subreddit or username
+          if (subreddit) {
+            // Use subreddit if available
+            cleanedLinks.push(`[${subreddit}](${cleanUrl})`);
+          } else {
+            // Fall back to username if no subreddit
+            cleanedLinks.push(`[${senderUsername}](${cleanUrl})`);
+          }
+        }
+        
+        // Send all links in one message
+        if (cleanedLinks.length > 0) {
+          await message.channel.send(cleanedLinks.join('\n'));
+        }
       }
       
       // Log successful cleaning
@@ -237,16 +432,20 @@ client.on('messageCreate', async (message) => {
           const twitterConversionInfo = twitterLinksConverted > 0 ? 
             `• ${twitterLinksConverted} Twitter/X link(s) converted to vxtwitter.com\n` : '';
           
+          const gallerySuccessInfo = galleryEmbeds.length > 0 ? 
+            `• ${galleryEmbeds.length} gallery image(s) posted as embeds\n` : '';
+          
           const formattingInfo = subreddit ? 
-            `• All links formatted with subreddit: ${subreddit}\n` : 
-            `• All links formatted with username: ${senderUsername}\n`;
+            `• Links formatted with subreddit: ${subreddit}\n` : 
+            allowedUrls.length > 0 ? `• Links formatted with username: ${senderUsername}\n` : '';
           
           await logChannel.send(
             `✅ **Cleaning Complete**\n` +
-            `• Processed ${allowedUrls.length} link(s) from **${message.author.tag}** in <#${message.channel.id}>${subredditSuccessInfo}` +
+            `• Processed ${allowedUrls.length + galleryEmbeds.length} item(s) from **${message.author.tag}** in <#${message.channel.id}>${subredditSuccessInfo}` +
+            `${gallerySuccessInfo}` +
             `${twitterConversionInfo}` +
             `${formattingInfo}` +
-            `• Blocked ${blockedUrls.length} unwanted link(s)`
+            (blockedUrls.length > 0 ? `• Blocked ${blockedUrls.length} unwanted link(s)` : '')
           );
         }
       } catch (error) {
