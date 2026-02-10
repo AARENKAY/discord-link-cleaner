@@ -269,7 +269,7 @@ const resolveUrl = async (shortUrl) => {
 // ========== MESSAGE FORMATTING ==========
 const formatMessage = (title, subreddit, author, urls, hasGallery = false, hasVideo = false) => {
   let message = `# ${title}\n\n`;
-  message += `**Posted in r/${subreddit} by ${author}**\n\n`; 
+  message += `*Posted in* **r/${subreddit}** *by* **${author}**\n\n`; 
   if (hasGallery && urls.length > 1) {
     message += `*Gallery:* ${urls.length} images\n\n`;
   } else if (hasVideo) {
