@@ -45,30 +45,68 @@ const ALLOWED_EXTENSIONS = [
   '.mp4', '.gif', '.gifv', '.webm', '.jpg', '.jpeg', '.png', '.webp'
 ];
 
-const LOG_CHANNEL_ID = '1470005338483982400'; // Added log channel ID
+const ALLOWED_WEBSITES = [
+  'redgifs.com'
+  // Add more allowed websites here in the future
+  // Example: 'example.com', 'another-site.com'
+];
+
+const LOG_CHANNEL_ID = '1470005338483982400';
+
+// ========== TEST MODE ==========
+const TEST_MODE = process.env.TEST_MODE === 'true' || false;
 // ========== END CONFIG ==========
 
-client.once('ready', () => {
+// Define the setup function
+const setupBot = () => {
   console.log(`✅ Bot online as ${client.user.tag}`);
   console.log(`🔍 Monitoring ${TARGET_BOT_IDS.length} bots`);
+  console.log(`🌐 Allowed websites: ${ALLOWED_WEBSITES.join(', ') || 'None'}`);
+  console.log(`🧪 TEST MODE: ${TEST_MODE ? 'ENABLED - Processing ALL users' : 'DISABLED - Normal filtering'}`);
+  
+  const statusText = TEST_MODE ? 'TEST MODE: Processing all users' : 'Cleaning links...';
   
   client.user.setPresence({
-    activities: [{ name: 'Cleaning links...', type: ActivityType.Watching }],
-    status: 'online'
+    activities: [{ name: statusText, type: ActivityType.Watching }],
+    status: TEST_MODE ? 'idle' : 'online'
   });
-});
+};
+
+// Use clientReady (future-proof) and ready (for compatibility)
+client.once('clientReady', setupBot);
+client.once('ready', setupBot); // Fallback for older Discord.js versions
 
 client.on('messageCreate', async (message) => {
+  // Skip bot's own messages
   if (message.author.id === client.user.id) return;
-  if (!TARGET_BOT_IDS.includes(message.author.id)) return;
   
-  console.log(`📨 From: ${message.author.tag} in #${message.channel.name}`);
+  // In normal mode, only process target bots
+  // In test mode, process ALL messages (except bot's own)
+  if (!TEST_MODE && !TARGET_BOT_IDS.includes(message.author.id)) return;
+  
+  const isTargetBot = TARGET_BOT_IDS.includes(message.author.id);
+  const modeLabel = TEST_MODE ? '🧪 TEST MODE' : '🔍 NORMAL MODE';
+  const userType = isTargetBot ? 'target bot' : 'regular user';
+  
+  console.log(`${modeLabel}: From ${message.author.tag} (${userType}) in #${message.channel.name}`);
+  console.log(`📝 Original content: ${message.content}`);
   
   // Log message processing to log channel
   try {
     const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
     if (logChannel) {
-      await logChannel.send(`🔍 Processing message from **${message.author.tag}** in <#${message.channel.id}>`);
+      // Truncate long messages to avoid Discord's character limit
+      const truncatedContent = message.content.length > 1000 
+        ? message.content.substring(0, 1000) + '...' 
+        : message.content;
+      
+      const testModeNotice = TEST_MODE ? '🧪 **TEST MODE ACTIVE**\n' : '';
+      const userTypeLabel = TEST_MODE && !isTargetBot ? ' (Regular User - Test Mode Only)' : '';
+      
+      await logChannel.send(
+        `${testModeNotice}🔍 Processing message from **${message.author.tag}**${userTypeLabel} in <#${message.channel.id}>\n` +
+        `📝 **Original content:**\n${truncatedContent}`
+      );
     }
   } catch (error) {
     console.error('Failed to send log to log channel:', error);
@@ -82,46 +120,88 @@ client.on('messageCreate', async (message) => {
   const allowedUrls = [];
   const blockedUrls = [];
   
-  for (const url of allUrls) {
-    const urlLower = url.toLowerCase();
-    
-    if (urlLower.includes('redgifs.com')) {
-      allowedUrls.push(url);
-      continue;
-    }
-    
-    let hasAllowedExtension = false;
-    for (const ext of ALLOWED_EXTENSIONS) {
-      if (urlLower.includes(ext) || urlLower.includes(ext + '?') || urlLower.endsWith(ext)) {
-        hasAllowedExtension = true;
-        break;
+  if (TEST_MODE) {
+    // In test mode, allow ALL URLs regardless of filtering rules
+    allowedUrls.push(...allUrls);
+    console.log(`🧪 TEST MODE: Allowing all ${allUrls.length} URLs without filtering`);
+  } else {
+    // Normal filtering logic - only for target bots
+    for (const url of allUrls) {
+      const urlLower = url.toLowerCase();
+      
+      // Check if URL is from an allowed website
+      let isAllowedWebsite = false;
+      for (const website of ALLOWED_WEBSITES) {
+        if (urlLower.includes(website)) {
+          isAllowedWebsite = true;
+          allowedUrls.push(url);
+          break;
+        }
       }
-    }
-    
-    if (hasAllowedExtension) {
-      allowedUrls.push(url);
-    } else {
-      blockedUrls.push(url);
+      
+      if (isAllowedWebsite) continue;
+      
+      // Check for allowed file extensions
+      let hasAllowedExtension = false;
+      for (const ext of ALLOWED_EXTENSIONS) {
+        if (urlLower.includes(ext) || urlLower.includes(ext + '?') || urlLower.endsWith(ext)) {
+          hasAllowedExtension = true;
+          break;
+        }
+      }
+      
+      if (hasAllowedExtension) {
+        allowedUrls.push(url);
+      } else {
+        blockedUrls.push(url);
+      }
     }
   }
   
-  // Log link analysis results
+  // Extract subreddit info if present (e.g., "r/aww" or "/r/aww")
+  const subredditPattern = /(?:\/?r\/)([\w]+)/gi;
+  const subredditMatches = message.content.match(subredditPattern);
+  const subreddit = subredditMatches ? subredditMatches[0].replace(/^\/?/, '') : null; // Get first subreddit, clean slashes
+  const subredditInfo = subredditMatches ? `• Subreddit(s): ${subredditMatches.join(', ')}\n` : '';
+  
+  // Get sender's username for formatting (without discriminator if present)
+  const senderUsername = message.author.username;
+  
+  // Log link analysis results with original content details
   try {
     const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
     if (logChannel) {
+      // Create a summary of blocked URLs (truncated if too many)
+      let blockedSummary = '';
+      if (!TEST_MODE && blockedUrls.length > 0) {
+        const blockedToShow = blockedUrls.slice(0, 3); // Show first 3 blocked URLs
+        blockedSummary = `• Blocked URLs: ${blockedToShow.join(', ')}`;
+        if (blockedUrls.length > 3) {
+          blockedSummary += ` (+${blockedUrls.length - 3} more)`;
+        }
+        blockedSummary += '\n';
+      }
+      
+      const testModeIndicator = TEST_MODE ? '🧪 **TEST MODE ANALYSIS**\n' : '🔗 **Link Analysis:**\n';
+      const userTypeNote = TEST_MODE && !isTargetBot ? ' (Regular User - Test Mode Only)' : '';
+      
       await logChannel.send(
-        `🔗 Link Analysis:\n` +
+        `${testModeIndicator}` +
+        `• From: **${message.author.tag}**${userTypeNote} in <#${message.channel.id}>\n` +
+        `${subredditInfo}` +
         `• Total URLs: ${allUrls.length}\n` +
-        `• Allowed: ${allowedUrls.length}\n` +
-        `• Blocked: ${blockedUrls.length}\n` +
-        `• Action: ${allowedUrls.length === 0 ? 'Delete only' : 'Delete & repost'}`
+        (TEST_MODE ? `• Allowed: ${allowedUrls.length} (ALL - Test Mode)\n` : 
+         `• Allowed: ${allowedUrls.length}\n` +
+         `• Blocked: ${blockedUrls.length}\n`) +
+        `${blockedSummary}` +
+        `• Action: ${allowedUrls.length === 0 && !TEST_MODE ? 'Delete only' : TEST_MODE ? 'Test Mode - Allowing all' : 'Delete & repost'}`
       );
     }
   } catch (error) {
     console.error('Failed to send log to log channel:', error);
   }
   
-  if (allowedUrls.length === 0 && blockedUrls.length > 0) {
+  if (!TEST_MODE && allowedUrls.length === 0 && blockedUrls.length > 0) {
     await message.delete();
     return;
   }
@@ -129,19 +209,64 @@ client.on('messageCreate', async (message) => {
   if (allowedUrls.length > 0) {
     try {
       await message.delete();
+      
+      // Send all cleaned links in one message for better organization
+      const cleanedLinks = [];
+      
       for (const url of allowedUrls) {
         let cleanUrl = url.split('?')[0].trim();
         cleanUrl = cleanUrl.replace(/\/+$/, '');
-        await message.channel.send(cleanUrl);
+        
+        // Check if URL is from an allowed website (not just file extensions)
+        let isFromAllowedWebsite = false;
+        for (const website of ALLOWED_WEBSITES) {
+          if (cleanUrl.toLowerCase().includes(website)) {
+            isFromAllowedWebsite = true;
+            break;
+          }
+        }
+        
+        // Format link with subreddit if available and it's from an allowed website
+        // OR use sender's username if no subreddit
+        if (isFromAllowedWebsite) {
+          const linkLabel = subreddit || senderUsername;
+          cleanedLinks.push(`[${linkLabel}](${cleanUrl})`);
+        } else {
+          cleanedLinks.push(cleanUrl);
+        }
+      }
+      
+      // Send all links in one message
+      if (cleanedLinks.length > 0) {
+        await message.channel.send(cleanedLinks.join('\n'));
       }
       
       // Log successful cleaning
       try {
         const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
         if (logChannel) {
+          // Add subreddit info to success log if available
+          const subredditSuccessInfo = subredditInfo ? `\n${subredditInfo}` : '';
+          
+          // Show how many links were formatted
+          const formattedLinksCount = allowedUrls.filter(url => {
+            for (const website of ALLOWED_WEBSITES) {
+              if (url.toLowerCase().includes(website)) return true;
+            }
+            return false;
+          }).length;
+          
+          const formattingInfo = formattedLinksCount > 0 ? 
+            `• ${formattedLinksCount} link(s) formatted with ${subreddit ? 'subreddit' : 'username'}\n` : '';
+          
+          const testModeSuccessNote = TEST_MODE ? '🧪 **TEST MODE COMPLETE**\n' : '✅ **Cleaning Complete**\n';
+          const userTypeLabel = TEST_MODE && !isTargetBot ? ' (Regular User - Test Mode Only)' : '';
+          
           await logChannel.send(
-            `✅ Cleaned ${allowedUrls.length} link(s) from **${message.author.tag}** in <#${message.channel.id}>\n` +
-            `Blocked ${blockedUrls.length} unwanted link(s)`
+            `${testModeSuccessNote}` +
+            `• Processed ${allowedUrls.length} link(s) from **${message.author.tag}**${userTypeLabel} in <#${message.channel.id}>${subredditSuccessInfo}` +
+            `${formattingInfo}` +
+            (TEST_MODE ? '' : `• Blocked ${blockedUrls.length} unwanted link(s)`)
           );
         }
       } catch (error) {
@@ -151,11 +276,19 @@ client.on('messageCreate', async (message) => {
     } catch (error) {
       console.error(`Error: ${error.message}`);
       
-      // Log errors
+      // Log errors with original content for debugging
       try {
         const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
         if (logChannel) {
-          await logChannel.send(`❌ Error processing message: ${error.message}`);
+          const truncatedErrorContent = message.content.length > 500 
+            ? message.content.substring(0, 500) + '...' 
+            : message.content;
+          
+          await logChannel.send(
+            `❌ **Error processing message:** ${error.message}\n` +
+            `• From: **${message.author.tag}**\n` +
+            `• Original content: ${truncatedErrorContent}`
+          );
         }
       } catch (logError) {
         console.error('Failed to send error log:', logError);
