@@ -5,6 +5,15 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// ========== DISCORD BOT ==========
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
+});
+
 // ========== EXPRESS HEALTH SERVER ==========
 app.get('/health', (req, res) => {
   res.json({
@@ -23,15 +32,6 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🌐 Health server on port ${PORT}`);
-});
-
-// ========== DISCORD BOT ==========
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
 });
 
 // ========== CONFIG ==========
@@ -75,13 +75,14 @@ const cleanUrl = (url) => {
   
   return cleaned;
 };
+
 // ========== REDDIT CONTENT EXTRACTOR ==========
 const extractRedditContent = async (redditUrl) => {
   try {
     console.log(`🎬 Extracting Reddit content from: ${redditUrl}`);
     
     // Add .json to get the JSON data
-    const jsonUrl = `${redditUrl}.json`;
+    const jsonUrl = `${redditUrl.replace(/\/$/, '')}.json`;
     
     const response = await axios.get(jsonUrl, {
       headers: {
@@ -117,7 +118,13 @@ const extractRedditContent = async (redditUrl) => {
       return null;
     };
     
-    const postData = findPostData(data);
+    // Reddit API returns array with post data in data.children[0].data
+    let postData = null;
+    if (Array.isArray(data) && data[0]?.data?.children?.[0]?.data) {
+      postData = data[0].data.children[0].data;
+    } else {
+      postData = findPostData(data);
+    }
     
     if (!postData) {
       console.log('❌ Could not find post data in Reddit JSON');
@@ -187,7 +194,7 @@ const extractRedditContent = async (redditUrl) => {
     }
     
     // 3. Check for direct image URL
-    if (postData.url && !extractedUrls.length) {
+    if (postData.url && extractedUrls.length === 0) {
       const urlLower = postData.url.toLowerCase();
       // Check if it's a direct image/video link
       if (urlLower.includes('.jpg') || urlLower.includes('.jpeg') || 
@@ -207,7 +214,7 @@ const extractRedditContent = async (redditUrl) => {
     }
     
     // 4. Also check url_overridden_by_dest (sometimes different from url)
-    if (postData.url_overridden_by_dest && !extractedUrls.length) {
+    if (postData.url_overridden_by_dest && extractedUrls.length === 0) {
       const urlLower = postData.url_overridden_by_dest.toLowerCase();
       if (urlLower.includes('redgifs.com')) {
         const cleanedUrl = cleanUrl(postData.url_overridden_by_dest);
@@ -239,7 +246,6 @@ const extractRedditContent = async (redditUrl) => {
   }
 };
 
-
 // ========== URL RESOLVER ==========
 const resolveUrl = async (shortUrl) => {
   try {
@@ -250,11 +256,13 @@ const resolveUrl = async (shortUrl) => {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       },
       maxRedirects: 5,
-      timeout: 5000
+      timeout: 5000,
+      // Don't follow redirects automatically to get the final URL
+      validateStatus: null
     });
     
     // Get the final URL after redirects
-    const finalUrl = response.request.res.responseUrl;
+    const finalUrl = response.request?.res?.responseUrl || response.config?.url || shortUrl;
     console.log(`✅ Resolved: ${shortUrl} -> ${finalUrl}`);
     
     return finalUrl;
@@ -263,8 +271,6 @@ const resolveUrl = async (shortUrl) => {
     return null;
   }
 };
-
-
 
 // ========== MESSAGE FORMATTING ==========
 const formatMessage = (title, subreddit, author, urls, hasGallery = false, hasVideo = false) => {
@@ -306,13 +312,19 @@ const setupBot = () => {
   });
 };
 
+// FIXED: Using clientReady for Discord.js v15
 client.once('clientReady', setupBot);
-client.once('ready', setupBot);
 
 // ========== MESSAGE PROCESSING ==========
 client.on('messageCreate', async (message) => {
+  // Prevent bot from processing its own messages
   if (message.author.id === client.user.id) return;
+  
+  // Only process messages from target bots
   if (!TARGET_BOT_IDS.includes(message.author.id)) return;
+  
+  // Ignore messages without content
+  if (!message.content) return;
   
   console.log(`📨 From: ${message.author.tag} in #${message.channel.name}`);
   
@@ -350,11 +362,11 @@ client.on('messageCreate', async (message) => {
   
   // First, try to extract content from redd.it URLs
   for (const url of allUrls) {
-    if (url.includes('redd.it/')) {
+    if (url.includes('redd.it/') || url.includes('reddit.com/')) {
       // Resolve the short URL first
       const resolvedUrl = await resolveUrl(url);
       
-      if (resolvedUrl) {
+      if (resolvedUrl && (resolvedUrl.includes('reddit.com/') || resolvedUrl.includes('redd.it/'))) {
         // Try to extract Reddit content
         extractedResult = await extractRedditContent(resolvedUrl);
         if (extractedResult) {
@@ -367,8 +379,8 @@ client.on('messageCreate', async (message) => {
   
   // Process all URLs (skip the one we extracted from if successful)
   for (const url of allUrls) {
-    // Skip redd.it URLs if we successfully extracted content from them
-    if (extractedResult && url.includes('redd.it/')) {
+    // Skip redd.it/reddit.com URLs if we successfully extracted content from them
+    if (extractedResult && (url.includes('redd.it/') || url.includes('reddit.com/'))) {
       console.log(`⏭️ Skipping ${url} (already extracted Reddit content)`);
       continue;
     }
@@ -441,7 +453,11 @@ client.on('messageCreate', async (message) => {
   
   // If nothing allowed, just delete and return
   if (allAllowedUrls.length === 0 && blockedUrls.length > 0) {
-    await message.delete();
+    try {
+      await message.delete();
+    } catch (error) {
+      console.error('Failed to delete message:', error);
+    }
     return;
   }
   
