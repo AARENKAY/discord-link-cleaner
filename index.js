@@ -323,7 +323,6 @@ const setupBot = () => {
 };
 
 client.once('clientReady', setupBot);
-client.once('ready', setupBot);
 
 // ========== MESSAGE PROCESSING ==========
 client.on('messageCreate', async (message) => {
