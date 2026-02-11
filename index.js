@@ -159,22 +159,12 @@ const extractRedditContent = async (redditUrl) => {
     // 2. Check for video content - MULTIPLE LOCATIONS!
     let videoUrl = null;
     
-    // Location 1: secure_media.reddit_video.fallback_url
-    if (postData.secure_media?.reddit_video?.fallback_url) {
-      videoUrl = postData.secure_media.reddit_video.fallback_url;
-      console.log(`🎥 Found video in secure_media.reddit_video: ${videoUrl}`);
-    }
-    // Location 2: media.reddit_video.fallback_url
-    else if (postData.media?.reddit_video?.fallback_url) {
-      videoUrl = postData.media.reddit_video.fallback_url;
-      console.log(`🎥 Found video in media.reddit_video: ${videoUrl}`);
-    }
-    // Location 3: preview.reddit_video_preview.fallback_url (NEW - this is where it is!)
-    else if (postData.preview?.reddit_video_preview?.fallback_url) {
+    // Location 1: preview.reddit_video_preview.fallback_url (NEW - this is where it is!)
+    if (postData.preview?.reddit_video_preview?.fallback_url) {
       videoUrl = postData.preview.reddit_video_preview.fallback_url;
       console.log(`🎥 Found video in preview.reddit_video_preview: ${videoUrl}`);
     }
-    // Location 4: crosspost_parent_list (for crossposts)
+    // Location 2: crosspost_parent_list (for crossposts)
     else if (postData.crosspost_parent_list?.[0]?.preview?.reddit_video_preview?.fallback_url) {
       videoUrl = postData.crosspost_parent_list[0].preview.reddit_video_preview.fallback_url;
       console.log(`🎥 Found video in crosspost preview: ${videoUrl}`);
