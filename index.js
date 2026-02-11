@@ -76,310 +76,6 @@ const cleanUrl = (url) => {
   return cleaned;
 };
 
-// ========== REDDIT CONTENT EXTRACTOR ==========
-const findFallbackUrl = (obj) => {
-  if (obj && typeof obj === 'object') {
-    // Look for the fallback_url in the current object
-    if (obj.fallback_url) {
-      return obj.fallback_url;
-    }
-
-    // Search through the keys of the object to find nested objects
-    for (const key in obj) {
-      const result = findFallbackUrl(obj[key]);
-      if (result) {
-        return result;
-      }
-    }
-  }
-  return null;
-};
-
-const processPostData = (postData) => {
-  console.log(`✅ Found Reddit post: "${postData.title}" in r/${postData.subreddit}`);
-  
-  const extractedUrls = [];
-  let hasVideo = false;
-  
-  // ===== PRIORITY 1: REDDIT VIDEO PREVIEW =====
-  // Search for the fallback_url recursively in the entire postData
-  let videoUrl = findFallbackUrl(postData);
-  
-  if (videoUrl) {
-    const cleanedUrl = cleanUrl(videoUrl);
-    extractedUrls.push(cleanedUrl);
-    hasVideo = true;
-    console.log(`🎥 Extracted video from fallback_url: ${cleanedUrl}`);
-  }
-  
-  // ===== ONLY ADD REDGIFS IF NO REDDIT VIDEO WAS FOUND =====
-  if (!hasVideo) {
-    // Check for redgifs links in url_overridden_by_dest
-    if (postData.url_overridden_by_dest && postData.url_overridden_by_dest.toLowerCase().includes('redgifs.com')) {
-      const cleanedUrl = cleanUrl(postData.url_overridden_by_dest);
-      extractedUrls.push(cleanedUrl);
-      console.log(`🎬 Extracted Redgif (no Reddit video found): ${cleanedUrl}`);
-    }
-    // Check for redgifs links in url
-    else if (postData.url && postData.url.toLowerCase().includes('redgifs.com')) {
-      const cleanedUrl = cleanUrl(postData.url);
-      extractedUrls.push(cleanedUrl);
-      console.log(`🎬 Extracted Redgif (no Reddit video found): ${cleanedUrl}`);
-    }
-    // Check for embeds like Redgifs in secure_media
-    else if (postData.secure_media?.oembed?.provider_name === 'RedGIFs') {
-      const redgifsUrl = postData.url || postData.url_overridden_by_dest;
-      if (redgifsUrl && redgifsUrl.includes('redgifs.com')) {
-        const cleanedUrl = cleanUrl(redgifsUrl);
-        extractedUrls.push(cleanedUrl);
-        console.log(`🎬 Extracted RedGIFs embed (no Reddit video found): ${cleanedUrl}`);
-      }
-    }
-  } else {
-    console.log(`⏭️ Skipping RedGIFs link - already have Reddit video`);
-  }
-  
-  // Check for gallery images (only if no video was found)
-  if (!hasVideo && postData.media_metadata) {
-    console.log(`🎨 Found gallery with ${Object.keys(postData.media_metadata).length} items`);
-    
-    for (const [id, mediaData] of Object.entries(postData.media_metadata)) {
-      if (mediaData.status === 'valid') {
-        let imageUrl = '';
-        
-        // Try to get the best quality URL
-        if (mediaData.s?.gif) {
-          imageUrl = mediaData.s.gif;
-        } else if (mediaData.s?.mp4) {
-          imageUrl = mediaData.s.mp4;
-        } else if (mediaData.s?.u) {
-          imageUrl = mediaData.s.u;
-        } else if (mediaData.p?.length > 0) {
-          imageUrl = mediaData.p[mediaData.p.length - 1].u;
-        }
-        
-        if (imageUrl) {
-          const cleanedUrl = cleanUrl(imageUrl);
-          extractedUrls.push(cleanedUrl);
-          console.log(`📸 Extracted gallery image: ${cleanedUrl}`);
-        }
-      }
-    }
-  }
-  
-  // Check for direct image URL (only if nothing else found)
-  if (extractedUrls.length === 0 && postData.url) {
-    const urlLower = postData.url.toLowerCase();
-    // Check if it's a direct image/video link
-    if (urlLower.includes('.jpg') || urlLower.includes('.jpeg') || 
-        urlLower.includes('.png') || urlLower.includes('.gif') ||
-        urlLower.includes('.gifv') || urlLower.includes('.mp4') || 
-        urlLower.includes('.webm') || urlLower.includes('.webp') ||
-        urlLower.includes('i.redd.it') || urlLower.includes('v.redd.it')) {
-      const cleanedUrl = cleanUrl(postData.url);
-      extractedUrls.push(cleanedUrl);
-      console.log(`🖼️ Extracted direct media: ${cleanedUrl}`);
-    }
-  }
-  
-  if (extractedUrls.length === 0) {
-    console.log('❌ No media URLs extracted from Reddit post');
-    return null;
-  }
-  
-  return {
-    urls: extractedUrls,
-    title: postData.title,
-    subreddit: postData.subreddit,
-    author: postData.author,
-    source: 'reddit',
-    hasGallery: !!postData.media_metadata,
-    hasVideo: hasVideo
-  };
-};
-
-const extractRedditContent = async (redditUrl) => {
-  try {
-    console.log(`🎬 Extracting Reddit content from: ${redditUrl}`);
-    
-    // Clean the URL first - remove trailing slash
-    const cleanPostUrl = redditUrl.replace(/\/$/, '');
-    
-    // Add .json to get the JSON data
-    const jsonUrl = `${cleanPostUrl}.json`;
-    
-    console.log(`📡 Fetching: ${jsonUrl}`);
-    
-    const response = await axios.get(jsonUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Referer': 'https://www.reddit.com/',
-        'Origin': 'https://www.reddit.com',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-origin'
-      },
-      maxRedirects: 5,
-      timeout: 10000,
-      validateStatus: (status) => status < 500
-    });
-    
-    // Check if we got a valid response
-    if (response.status !== 200) {
-      console.log(`❌ Reddit API returned status ${response.status}`);
-      
-      // Try fallback with mobile API
-      try {
-        const postId = redditUrl.split('/comments/')[1]?.split('/')[0];
-        if (postId) {
-          console.log(`🔄 Trying mobile API for post ID: ${postId}`);
-          const mobileUrl = `https://www.reddit.com/comments/${postId}.json`;
-          
-          const mobileResponse = await axios.get(mobileUrl, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1',
-              'Accept': 'application/json'
-            },
-            timeout: 5000
-          });
-          
-          if (mobileResponse.status === 200) {
-            const mobileData = mobileResponse.data;
-            
-            const findPostData = (obj) => {
-              if (!obj || typeof obj !== 'object') return null;
-              if (obj.title && obj.subreddit) return obj;
-              if (Array.isArray(obj) && obj[0]?.data?.children?.[0]?.data?.title) {
-                return obj[0].data.children[0].data;
-              }
-              if (obj.data?.children?.[0]?.data?.title) {
-                return obj.data.children[0].data;
-              }
-              if (Array.isArray(obj)) {
-                for (let i = 0; i < obj.length; i++) {
-                  const result = findPostData(obj[i]);
-                  if (result) return result;
-                }
-              } else {
-                for (const key in obj) {
-                  const result = findPostData(obj[key]);
-                  if (result) return result;
-                }
-              }
-              return null;
-            };
-            
-            const postData = findPostData(mobileData);
-            if (postData) {
-              console.log(`✅ Success with mobile API`);
-              return processPostData(postData);
-            }
-          }
-        }
-      } catch (mobileError) {
-        console.log(`❌ Mobile API also failed: ${mobileError.message}`);
-      }
-      
-      return null;
-    }
-    
-    const data = response.data;
-    let postData = null;
-    
-    // Function to search for post data recursively
-    const findPostData = (obj) => {
-      if (!obj || typeof obj !== 'object') return null;
-      
-      // Check if this looks like post data (direct format)
-      if (obj.title && obj.subreddit) {
-        return obj;
-      }
-      
-      // Check if this is the new array format with Listing objects
-      if (Array.isArray(obj) && obj[0]?.data?.children?.[0]?.data?.title) {
-        return obj[0].data.children[0].data;
-      }
-      
-      // Check if this is a single Listing object format
-      if (obj.data?.children?.[0]?.data?.title) {
-        return obj.data.children[0].data;
-      }
-      
-      // Search in arrays and objects
-      if (Array.isArray(obj)) {
-        for (let i = 0; i < obj.length; i++) {
-          const result = findPostData(obj[i]);
-          if (result) return result;
-        }
-      } else {
-        for (const key in obj) {
-          const result = findPostData(obj[key]);
-          if (result) return result;
-        }
-      }
-      
-      return null;
-    };
-    
-    postData = findPostData(data);
-    
-    if (!postData) {
-      console.log('❌ Could not find post data in Reddit JSON');
-      return null;
-    }
-    
-    return processPostData(postData);
-    
-  } catch (error) {
-    console.error(`❌ Error extracting Reddit content:`, error.message);
-    if (error.response) {
-      console.error(`Response status: ${error.response.status}`);
-    }
-    return null;
-  }
-};
-
-// ========== URL RESOLVER ==========
-const resolveUrl = async (shortUrl) => {
-  try {
-    console.log(`🔄 Resolving URL: ${shortUrl}`);
-    
-    const response = await axios.get(shortUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Cache-Control': 'max-age=0'
-      },
-      maxRedirects: 5,
-      timeout: 10000,
-      validateStatus: (status) => status < 400
-    });
-    
-    // Get the final URL after redirects
-    const finalUrl = response.request.res.responseUrl;
-    console.log(`✅ Resolved: ${shortUrl} -> ${finalUrl}`);
-    
-    return finalUrl;
-  } catch (error) {
-    console.error(`❌ Failed to resolve ${shortUrl}:`, error.message);
-    return null;
-  }
-};
-
 // ========== MESSAGE FORMATTING ==========
 const formatMessage = async (channel, title, subreddit, author, urls, hasGallery = false, hasVideo = false) => {
   let message = `# ${title}\n\n`;
@@ -424,6 +120,198 @@ const formatMessage = async (channel, title, subreddit, author, urls, hasGallery
   await channel.send(`▪️▫️▪️▫️▪️▫️`);
 };
 
+// ========== REDDIT CONTENT EXTRACTOR WITH SMART FALLBACK_URL SEARCH ==========
+const extractRedditContent = async (redditUrl) => {
+  try {
+    console.log(`🎬 Extracting Reddit content from: ${redditUrl}`);
+    
+    // Add .json to get the JSON data
+    const jsonUrl = `${redditUrl}.json`;
+    
+    const response = await axios.get(jsonUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      },
+      timeout: 5000
+    });
+    
+    const data = response.data;
+    
+    // Function to search for post data recursively
+    const findPostData = (obj) => {
+      if (!obj || typeof obj !== 'object') return null;
+      
+      // Check if this looks like post data
+      if (obj.title && obj.subreddit) {
+        return obj;
+      }
+      
+      // Search in arrays and objects
+      if (Array.isArray(obj)) {
+        for (let i = 0; i < obj.length; i++) {
+          const result = findPostData(obj[i]);
+          if (result) return result;
+        }
+      } else {
+        for (const key in obj) {
+          const result = findPostData(obj[key]);
+          if (result) return result;
+        }
+      }
+      
+      return null;
+    };
+    
+    // Function to find ANY fallback_url in the entire post data
+    const findFallbackUrl = (obj) => {
+      if (!obj || typeof obj !== 'object') return null;
+      
+      // Direct match - found a fallback_url!
+      if (obj.fallback_url && typeof obj.fallback_url === 'string') {
+        return obj.fallback_url;
+      }
+      
+      // Search recursively through all properties
+      if (Array.isArray(obj)) {
+        for (let i = 0; i < obj.length; i++) {
+          const result = findFallbackUrl(obj[i]);
+          if (result) return result;
+        }
+      } else {
+        for (const key in obj) {
+          const result = findFallbackUrl(obj[key]);
+          if (result) return result;
+        }
+      }
+      
+      return null;
+    };
+    
+    const postData = findPostData(data);
+    
+    if (!postData) {
+      console.log('❌ Could not find post data in Reddit JSON');
+      return null;
+    }
+    
+    console.log(`✅ Found Reddit post: "${postData.title}" in r/${postData.subreddit}`);
+    
+    const extractedUrls = [];
+    let hasVideo = false;
+    
+    // 1. LOOK FOR ANY FALLBACK_URL ANYWHERE - this handles all video locations!
+    const videoUrl = findFallbackUrl(postData);
+    if (videoUrl) {
+      const cleanedUrl = cleanUrl(videoUrl);
+      extractedUrls.push(cleanedUrl);
+      hasVideo = true;
+      console.log(`🎥 Extracted video from fallback_url: ${cleanedUrl}`);
+    }
+    
+    // 2. Check for gallery images (media_metadata)
+    if (postData.media_metadata) {
+      console.log(`🎨 Found gallery with ${Object.keys(postData.media_metadata).length} items`);
+      
+      for (const [id, mediaData] of Object.entries(postData.media_metadata)) {
+        if (mediaData.status === 'valid') {
+          let imageUrl = '';
+          
+          // Try to get the best quality URL
+          if (mediaData.s?.gif) {
+            imageUrl = mediaData.s.gif;
+          } else if (mediaData.s?.mp4) {
+            imageUrl = mediaData.s.mp4;
+          } else if (mediaData.s?.u) {
+            imageUrl = mediaData.s.u;
+          } else if (mediaData.p?.length > 0) {
+            imageUrl = mediaData.p[mediaData.p.length - 1].u;
+          }
+          
+          if (imageUrl) {
+            const cleanedUrl = cleanUrl(imageUrl);
+            extractedUrls.push(cleanedUrl);
+            console.log(`📸 Extracted gallery image: ${cleanedUrl}`);
+          }
+        }
+      }
+    }
+    
+    // 3. Check for direct image URL (only if we haven't found anything yet)
+    if (!extractedUrls.length && postData.url) {
+      const urlLower = postData.url.toLowerCase();
+      // Check if it's a direct image/video link
+      if (urlLower.includes('.jpg') || urlLower.includes('.jpeg') || 
+          urlLower.includes('.png') || urlLower.includes('.gif') ||
+          urlLower.includes('.mp4') || urlLower.includes('.webm') ||
+          urlLower.includes('i.redd.it') || urlLower.includes('v.redd.it')) {
+        const cleanedUrl = cleanUrl(postData.url);
+        extractedUrls.push(cleanedUrl);
+        console.log(`🖼️ Extracted direct media: ${cleanedUrl}`);
+      }
+      // Also check for redgifs links
+      else if (urlLower.includes('redgifs.com')) {
+        const cleanedUrl = cleanUrl(postData.url);
+        extractedUrls.push(cleanedUrl);
+        console.log(`🎬 Extracted Redgif link: ${cleanedUrl}`);
+      }
+    }
+    
+    // 4. Also check url_overridden_by_dest for redgifs
+    if (postData.url_overridden_by_dest && !extractedUrls.length) {
+      const urlLower = postData.url_overridden_by_dest.toLowerCase();
+      if (urlLower.includes('redgifs.com')) {
+        const cleanedUrl = cleanUrl(postData.url_overridden_by_dest);
+        extractedUrls.push(cleanedUrl);
+        console.log(`🎬 Extracted Redgif from url_overridden_by_dest: ${cleanedUrl}`);
+      }
+    }
+    
+    if (extractedUrls.length === 0) {
+      console.log('❌ No media URLs extracted from Reddit post');
+      return null;
+    }
+    
+    return {
+      urls: extractedUrls,
+      title: postData.title,
+      subreddit: postData.subreddit,
+      author: postData.author,
+      source: 'reddit',
+      hasGallery: !!postData.media_metadata,
+      hasVideo: hasVideo
+    };
+    
+  } catch (error) {
+    console.error(`❌ Error extracting Reddit content:`, error.message);
+    return null;
+  }
+};
+
+// ========== URL RESOLVER ==========
+const resolveUrl = async (shortUrl) => {
+  try {
+    console.log(`🔄 Resolving URL: ${shortUrl}`);
+    
+    const response = await axios.get(shortUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      },
+      maxRedirects: 5,
+      timeout: 5000
+    });
+    
+    // Get the final URL after redirects
+    const finalUrl = response.request.res.responseUrl;
+    console.log(`✅ Resolved: ${shortUrl} -> ${finalUrl}`);
+    
+    return finalUrl;
+  } catch (error) {
+    console.error(`❌ Failed to resolve ${shortUrl}:`, error.message);
+    return null;
+  }
+};
+
+// ========== EXTRACT POST INFO FROM MESSAGE ==========
 const extractPostInfo = (messageContent) => {
   const titleMatch = messageContent.match(/\*\*(.*?)\*\*/);
   const subredditMatch = messageContent.match(/r\/([\w]+)/i);
@@ -448,6 +336,7 @@ const setupBot = () => {
 };
 
 client.once('clientReady', setupBot);
+client.once('ready', setupBot);
 
 // ========== MESSAGE PROCESSING ==========
 client.on('messageCreate', async (message) => {
@@ -473,25 +362,13 @@ client.on('messageCreate', async (message) => {
     console.error('Failed to send log:', error);
   }
   
-  // ===== FIXED URL EXTRACTION =====
-  // Extract URLs - handles parentheses, brackets, angle brackets, and markdown
-  const urlPattern = /https?:\/\/[^\s<>\)\]\"]+/gi;
-  // Remove angle brackets first
-  const cleanContent = message.content.replace(/[<>]/g, '');
-  const allUrls = cleanContent.match(urlPattern);
+  // Extract URLs
+  const urlPattern = /https?:\/\/[^\s<>\"]+/gi;
+  const allUrls = message.content.match(urlPattern);
   
   if (!allUrls) return;
   
-  // Clean each URL by removing trailing punctuation and markdown
-  const cleanedUrls = allUrls.map(url => {
-    // Remove common trailing characters: ), ], *, `, :, ,, ., etc.
-    return url.replace(/[\)\]\*\`:;,.\-]+$/, '');
-  });
-  
-  // Use cleanedUrls for processing
-  const urlsToProcess = [...new Set(cleanedUrls)]; // Remove duplicates
-  
-  // Extract post info from message (keep using original message.content for this)
+  // Extract post info from message
   const postInfo = extractPostInfo(message.content);
   
   // Process URLs
@@ -501,7 +378,7 @@ client.on('messageCreate', async (message) => {
   let extractedResult = null;
   
   // First, try to extract content from redd.it URLs
-  for (const url of urlsToProcess) {
+  for (const url of allUrls) {
     if (url.includes('redd.it/')) {
       // Resolve the short URL first
       const resolvedUrl = await resolveUrl(url);
@@ -518,7 +395,7 @@ client.on('messageCreate', async (message) => {
   }
   
   // Process all URLs (skip the one we extracted from if successful)
-  for (const url of urlsToProcess) {
+  for (const url of allUrls) {
     // Skip redd.it URLs if we successfully extracted content from them
     if (extractedResult && url.includes('redd.it/')) {
       console.log(`⏭️ Skipping ${url} (already extracted Reddit content)`);
@@ -539,36 +416,21 @@ client.on('messageCreate', async (message) => {
     // Twitter/X links are always allowed
     if (urlLower.includes('x.com/') || urlLower.includes('twitter.com/')) {
       allowedUrls.push(cleanedUrl);
-      console.log(`✅ Allowed Twitter/X: ${cleanedUrl}`);
       continue;
     }
     
-    // Check if this URL is one of our extracted Reddit video URLs
-    const isExtractedVideo = extractedResult?.urls?.includes(cleanedUrl);
-    
     // Check allowed extensions
     let hasAllowedExtension = false;
-    
-    if (isExtractedVideo) {
-      // Extracted Reddit videos ALWAYS have .mp4 extension - ALLOW THEM
-      hasAllowedExtension = true;
-      allowedUrls.push(cleanedUrl);
-      console.log(`✅ Allowed extracted Reddit video: ${cleanedUrl}`);
-    } else {
-      // Check original URLs against allowed extensions
-      for (const ext of ALLOWED_EXTENSIONS) {
-        if (urlLower.includes(ext) || urlLower.endsWith(ext)) {
-          hasAllowedExtension = true;
-          allowedUrls.push(cleanedUrl);
-          console.log(`✅ Allowed URL with extension: ${cleanedUrl}`);
-          break;
-        }
+    for (const ext of ALLOWED_EXTENSIONS) {
+      if (urlLower.includes(ext) || urlLower.endsWith(ext)) {
+        hasAllowedExtension = true;
+        allowedUrls.push(cleanedUrl);
+        break;
       }
     }
     
     if (!hasAllowedExtension) {
       blockedUrls.push(cleanedUrl);
-      console.log(`🚫 Blocked: ${cleanedUrl} (no allowed extension)`);
     }
   }
   
@@ -580,7 +442,6 @@ client.on('messageCreate', async (message) => {
       if (!seenUrls.has(extractedUrl)) {
         allAllowedUrls.push(extractedUrl);
         seenUrls.add(extractedUrl);
-        console.log(`➕ Added extracted URL: ${extractedUrl}`);
       }
     }
   }
@@ -599,7 +460,7 @@ client.on('messageCreate', async (message) => {
         `• From: **${message.author.tag}**\n` +
         `• Title: ${extractedResult ? extractedResult.title : postInfo.title}\n` +
         `• Subreddit: r/${extractedResult ? extractedResult.subreddit : postInfo.subreddit}\n` +
-        `• URLs: ${urlsToProcess.length} total, ${allAllowedUrls.length} allowed, ${blockedUrls.length} blocked` +
+        `• URLs: ${allUrls.length} total, ${allAllowedUrls.length} allowed, ${blockedUrls.length} blocked` +
         extractionInfo
       );
     }
@@ -607,10 +468,9 @@ client.on('messageCreate', async (message) => {
     console.error('Failed to send analysis log:', error);
   }
   
-   // If nothing allowed, just delete and return
+  // If nothing allowed, just delete and return
   if (allAllowedUrls.length === 0 && blockedUrls.length > 0) {
     await message.delete();
-    console.log(`🗑️ Deleted message - no allowed URLs`);
     return;
   }
   
@@ -626,6 +486,7 @@ client.on('messageCreate', async (message) => {
       const hasGallery = extractedResult ? extractedResult.hasGallery : false;
       const hasVideo = extractedResult ? extractedResult.hasVideo : false;
       
+      // Use the new formatMessage function
       await formatMessage(
         message.channel,
         finalTitle,
@@ -635,8 +496,6 @@ client.on('messageCreate', async (message) => {
         hasGallery,
         hasVideo
       );
-      
-      console.log(`✅ Posted cleaned message with ${allAllowedUrls.length} URLs`);
       
       // Log success
       try {
@@ -658,7 +517,7 @@ client.on('messageCreate', async (message) => {
       }
       
     } catch (error) {
-      console.error(`❌ Error: ${error.message}`);
+      console.error(`Error: ${error.message}`);
       
       try {
         const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
