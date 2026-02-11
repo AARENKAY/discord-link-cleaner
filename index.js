@@ -110,7 +110,6 @@ const formatMessage = async (channel, title, subreddit, author, urls, hasGallery
   } 
   // Handling Video URLs
   else if (hasVideo) {
-    message += `*Video/Gif*\n\n`;
     for (const url of urls) {
       message += `[Video/Gif](${url})\n\n`; // Embed the video URL with a clickable text
     }
