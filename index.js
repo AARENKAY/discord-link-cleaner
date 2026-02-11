@@ -279,16 +279,38 @@ const resolveUrl = async (shortUrl) => {
 // ========== MESSAGE FORMATTING ==========
 const formatMessage = async (channel, title, subreddit, author, urls, hasGallery = false, hasVideo = false) => {
   let message = `# ${title}\n\n`;
-  message += `*Posted in* **r/${subreddit}** *by* **${author}**\n\n`; 
+  message += `*Posted in* **r/${subreddit}** *by* **${author}**\n\n`;
+  
   if (hasGallery && urls.length > 1) {
     message += `*Gallery:* ${urls.length} images\n\n`;
+    
+    // Format gallery images as clickable links [Pic1](url) [Pic2](url) etc.
+    const galleryLinks = urls.map((url, index) => {
+      const picNumber = index + 1;
+      return `[Pic${picNumber}](${url})`;
+    }).join(' ');
+    
+    message += `${galleryLinks}\n\n`;
   } else if (hasVideo) {
     message += `*Video/Gif*\n\n`;
+    // Single video URL on its own line
+    for (const url of urls) {
+      message += `${url}\n\n`;
+    }
   } else if (urls.length > 1) {
     message += `*Images:* ${urls.length}\n\n`;
-  } 
-  for (const url of urls) {
-    message += `${url}\n\n`;
+    // Format multiple images as clickable links
+    const imageLinks = urls.map((url, index) => {
+      const picNumber = index + 1;
+      return `[Pic${picNumber}](${url})`;
+    }).join(' ');
+    
+    message += `${imageLinks}\n\n`;
+  } else {
+    // Single image/video URL
+    for (const url of urls) {
+      message += `${url}\n\n`;
+    }
   }
   
   // Send the main message
@@ -347,9 +369,11 @@ client.on('messageCreate', async (message) => {
     console.error('Failed to send log:', error);
   }
   
-  // Extract URLs
-  const urlPattern = /https?:\/\/[^\s<>\"]+/gi;
-  const allUrls = message.content.match(urlPattern);
+  // Extract URLs - FIXED to handle angle brackets
+  const urlPattern = /https?:\/\/[^\s\"]+/gi;
+  // Remove angle brackets before matching
+  const cleanContent = message.content.replace(/<|>/g, '');
+  const allUrls = cleanContent.match(urlPattern);
   
   if (!allUrls) return;
   
