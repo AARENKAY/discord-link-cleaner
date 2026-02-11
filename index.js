@@ -22,7 +22,7 @@ app.get('/', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`рџЊђ Health server on port ${PORT}`);
+  console.log(`🌐 Health server on port ${PORT}`);
 });
 
 // ========== DISCORD BOT ==========
@@ -47,13 +47,9 @@ const ALLOWED_EXTENSIONS = [
 ];
 
 const LOG_CHANNEL_ID = '1470005338483982400';
-
-// 🕐 DELAY CONFIG – 2 seconds between reposts
-const REPOST_DELAY_MS = 2000;
 // ========== END CONFIG ==========
 
-// ========== UTILITY ==========
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // ========== SIMPLE URL FUNCTIONS ==========
 const cleanUrl = (url) => {
@@ -90,7 +86,6 @@ const formatMessage = async (channel, title, subreddit, author, urls, hasGallery
   if (hasGallery && urls.length > 1) {
     message += `*Gallery:* ${urls.length} images\n\n`;
     
-    // Format gallery images as clickable links [Pic1](url) [Pic2](url) etc.
     const galleryLinks = urls.map((url, index) => {
       const picNumber = index + 1;
       return `[Pic${picNumber}](${url})`;
@@ -99,13 +94,11 @@ const formatMessage = async (channel, title, subreddit, author, urls, hasGallery
     message += `${galleryLinks}\n\n`;
   } else if (hasVideo) {
     message += `*Video/Gif*\n\n`;
-    // Single video URL on its own line
     for (const url of urls) {
       message += `${url}\n\n`;
     }
   } else if (urls.length > 1) {
     message += `*Images:* ${urls.length}\n\n`;
-    // Format multiple images as clickable links
     const imageLinks = urls.map((url, index) => {
       const picNumber = index + 1;
       return `[Pic${picNumber}](${url})`;
@@ -113,25 +106,20 @@ const formatMessage = async (channel, title, subreddit, author, urls, hasGallery
     
     message += `${imageLinks}\n\n`;
   } else {
-    // Single image/video URL
     for (const url of urls) {
       message += `${url}\n\n`;
     }
   }
   
-  // Send the main message
   await channel.send(message);
-  
-  // Send divider as a second immediate message
-  await channel.send(`в–ЄпёЏв–«пёЏв–ЄпёЏв–«пёЏв–ЄпёЏв–«пёЏ`);
+  await channel.send(`━━━━━━━━━━`);
 };
 
 // ========== REDDIT CONTENT EXTRACTOR WITH SMART FALLBACK_URL SEARCH ==========
 const extractRedditContent = async (redditUrl) => {
   try {
-    console.log(`рџЋ¬ Extracting Reddit content from: ${redditUrl}`);
+    console.log(`🎬 Extracting Reddit content from: ${redditUrl}`);
     
-    // Add .json to get the JSON data
     const jsonUrl = `${redditUrl}.json`;
     
     const response = await axios.get(jsonUrl, {
@@ -143,16 +131,9 @@ const extractRedditContent = async (redditUrl) => {
     
     const data = response.data;
     
-    // Function to search for post data recursively
     const findPostData = (obj) => {
       if (!obj || typeof obj !== 'object') return null;
-      
-      // Check if this looks like post data
-      if (obj.title && obj.subreddit) {
-        return obj;
-      }
-      
-      // Search in arrays and objects
+      if (obj.title && obj.subreddit) return obj;
       if (Array.isArray(obj)) {
         for (let i = 0; i < obj.length; i++) {
           const result = findPostData(obj[i]);
@@ -164,20 +145,12 @@ const extractRedditContent = async (redditUrl) => {
           if (result) return result;
         }
       }
-      
       return null;
     };
     
-    // Function to find ANY fallback_url in the entire post data
     const findFallbackUrl = (obj) => {
       if (!obj || typeof obj !== 'object') return null;
-      
-      // Direct match - found a fallback_url!
-      if (obj.fallback_url && typeof obj.fallback_url === 'string') {
-        return obj.fallback_url;
-      }
-      
-      // Search recursively through all properties
+      if (obj.fallback_url && typeof obj.fallback_url === 'string') return obj.fallback_url;
       if (Array.isArray(obj)) {
         for (let i = 0; i < obj.length; i++) {
           const result = findFallbackUrl(obj[i]);
@@ -189,40 +162,53 @@ const extractRedditContent = async (redditUrl) => {
           if (result) return result;
         }
       }
-      
       return null;
     };
     
     const postData = findPostData(data);
     
     if (!postData) {
-      console.log('вќЊ Could not find post data in Reddit JSON');
+      console.log('❌ Could not find post data in Reddit JSON');
       return null;
     }
     
-    console.log(`вњ… Found Reddit post: "${postData.title}" in r/${postData.subreddit}`);
+    console.log(`✅ Found Reddit post: "${postData.title}" in r/${postData.subreddit}`);
     
     const extractedUrls = [];
     let hasVideo = false;
     
-    // 1. LOOK FOR ANY FALLBACK_URL ANYWHERE - this handles all video locations!
     const videoUrl = findFallbackUrl(postData);
     if (videoUrl) {
       const cleanedUrl = cleanUrl(videoUrl);
       extractedUrls.push(cleanedUrl);
       hasVideo = true;
-      console.log(`рџЋҐ Extracted video from fallback_url: ${cleanedUrl}`);
+      console.log(`🎥 Extracted video from fallback_url: ${cleanedUrl}`);
     }
     
-    // 2. Check for gallery images (media_metadata)
-    if (postData.media_metadata) {
-      console.log(`рџЋЁ Found gallery with ${Object.keys(postData.media_metadata).length} items`);
+    // Fallback to Redgifs if no v.redd.it video found
+    if (!hasVideo) {
+      let redgifUrl = null;
+      if (postData.url && postData.url.toLowerCase().includes('redgifs.com')) {
+        redgifUrl = cleanUrl(postData.url);
+      } else if (postData.url_overridden_by_dest && postData.url_overridden_by_dest.toLowerCase().includes('redgifs.com')) {
+        redgifUrl = cleanUrl(postData.url_overridden_by_dest);
+      }
+      
+      if (redgifUrl) {
+        extractedUrls.length = 0;
+        extractedUrls.push(redgifUrl);
+        hasVideo = true;
+        console.log(`🎬 Using Redgif link as fallback video: ${redgifUrl}`);
+      }
+    }
+    
+    if (!hasVideo && postData.media_metadata) {
+      console.log(`📸 Found gallery with ${Object.keys(postData.media_metadata).length} items`);
       
       for (const [id, mediaData] of Object.entries(postData.media_metadata)) {
         if (mediaData.status === 'valid') {
           let imageUrl = '';
           
-          // Try to get the best quality URL
           if (mediaData.s?.gif) {
             imageUrl = mediaData.s.gif;
           } else if (mediaData.s?.mp4) {
@@ -236,44 +222,40 @@ const extractRedditContent = async (redditUrl) => {
           if (imageUrl) {
             const cleanedUrl = cleanUrl(imageUrl);
             extractedUrls.push(cleanedUrl);
-            console.log(`рџ“ё Extracted gallery image: ${cleanedUrl}`);
+            console.log(`📸 Extracted gallery image: ${cleanedUrl}`);
           }
         }
       }
     }
     
-    // 3. Check for direct image URL (only if we haven't found anything yet)
     if (!extractedUrls.length && postData.url) {
       const urlLower = postData.url.toLowerCase();
-      // Check if it's a direct image/video link
       if (urlLower.includes('.jpg') || urlLower.includes('.jpeg') || 
           urlLower.includes('.png') || urlLower.includes('.gif') ||
           urlLower.includes('.mp4') || urlLower.includes('.webm') ||
           urlLower.includes('i.redd.it') || urlLower.includes('v.redd.it')) {
         const cleanedUrl = cleanUrl(postData.url);
         extractedUrls.push(cleanedUrl);
-        console.log(`рџ–јпёЏ Extracted direct media: ${cleanedUrl}`);
+        console.log(`🖼️ Extracted direct media: ${cleanedUrl}`);
       }
-      // Also check for redgifs links
       else if (urlLower.includes('redgifs.com')) {
         const cleanedUrl = cleanUrl(postData.url);
         extractedUrls.push(cleanedUrl);
-        console.log(`рџЋ¬ Extracted Redgif link: ${cleanedUrl}`);
+        console.log(`🎬 Extracted Redgif link: ${cleanedUrl}`);
       }
     }
     
-    // 4. Also check url_overridden_by_dest for redgifs
-    if (postData.url_overridden_by_dest && !extractedUrls.length) {
+    if (!extractedUrls.length && postData.url_overridden_by_dest) {
       const urlLower = postData.url_overridden_by_dest.toLowerCase();
       if (urlLower.includes('redgifs.com')) {
         const cleanedUrl = cleanUrl(postData.url_overridden_by_dest);
         extractedUrls.push(cleanedUrl);
-        console.log(`рџЋ¬ Extracted Redgif from url_overridden_by_dest: ${cleanedUrl}`);
+        console.log(`🎬 Extracted Redgif from url_overridden_by_dest: ${cleanedUrl}`);
       }
     }
     
     if (extractedUrls.length === 0) {
-      console.log('вќЊ No media URLs extracted from Reddit post');
+      console.log('❌ No media URLs extracted from Reddit post');
       return null;
     }
     
@@ -288,7 +270,7 @@ const extractRedditContent = async (redditUrl) => {
     };
     
   } catch (error) {
-    console.error(`вќЊ Error extracting Reddit content:`, error.message);
+    console.error(`❌ Error extracting Reddit content:`, error.message);
     return null;
   }
 };
@@ -296,7 +278,7 @@ const extractRedditContent = async (redditUrl) => {
 // ========== URL RESOLVER ==========
 const resolveUrl = async (shortUrl) => {
   try {
-    console.log(`рџ”„ Resolving URL: ${shortUrl}`);
+    console.log(`🔍 Resolving URL: ${shortUrl}`);
     
     const response = await axios.get(shortUrl, {
       headers: {
@@ -306,13 +288,12 @@ const resolveUrl = async (shortUrl) => {
       timeout: 5000
     });
     
-    // Get the final URL after redirects
     const finalUrl = response.request.res.responseUrl;
-    console.log(`вњ… Resolved: ${shortUrl} -> ${finalUrl}`);
+    console.log(`✅ Resolved: ${shortUrl} -> ${finalUrl}`);
     
     return finalUrl;
   } catch (error) {
-    console.error(`вќЊ Failed to resolve ${shortUrl}:`, error.message);
+    console.error(`❌ Failed to resolve ${shortUrl}:`, error.message);
     return null;
   }
 };
@@ -332,8 +313,8 @@ const extractPostInfo = (messageContent) => {
 
 // ========== BOT SETUP ==========
 const setupBot = () => {
-  console.log(`вњ… Bot online as ${client.user.tag}`);
-  console.log(`рџ”Ќ Monitoring ${TARGET_BOT_IDS.length} bots`);
+  console.log(`✅ Bot online as ${client.user.tag}`);
+  console.log(`🔍 Monitoring ${TARGET_BOT_IDS.length} bots`);
   
   client.user.setPresence({
     activities: [{ name: 'Cleaning links...', type: ActivityType.Watching }],
@@ -349,9 +330,8 @@ client.on('messageCreate', async (message) => {
   if (message.author.id === client.user.id) return;
   if (!TARGET_BOT_IDS.includes(message.author.id)) return;
   
-  console.log(`рџ“Ё From: ${message.author.tag} in #${message.channel.name}`);
+  console.log(`📩 From: ${message.author.tag} in #${message.channel.name}`);
   
-  // Log to log channel
   try {
     const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
     if (logChannel) {
@@ -360,80 +340,60 @@ client.on('messageCreate', async (message) => {
         : message.content;
       
       await logChannel.send(
-        `рџ”Ќ Processing message from **${message.author.tag}** in <#${message.channel.id}>\n` +
-        `рџ“ќ **Content:**\n${truncatedContent}`
+        `🔍 Processing message from **${message.author.tag}** in <#${message.channel.id}>\n` +
+        `📝 **Content:**\n${truncatedContent}`
       );
     }
   } catch (error) {
     console.error('Failed to send log:', error);
   }
   
-  // Extract URLs
   const urlPattern = /https?:\/\/[^\s<>\"]+/gi;
   const allUrls = message.content.match(urlPattern);
   
   if (!allUrls) return;
   
-  // Extract post info from message
   const postInfo = extractPostInfo(message.content);
   
-  // Process URLs
   const allowedUrls = [];
   const blockedUrls = [];
-  const redgifFallbackUrls = []; // 🆕 Store RedGIFs links for fallback
   const seenUrls = new Set();
   let extractedResult = null;
   
-  // First, try to extract content from redd.it URLs
   for (const url of allUrls) {
     if (url.includes('redd.it/')) {
-      // Resolve the short URL first
       const resolvedUrl = await resolveUrl(url);
-      
       if (resolvedUrl) {
-        // Try to extract Reddit content
         extractedResult = await extractRedditContent(resolvedUrl);
         if (extractedResult) {
-          console.log(`вњ… Successfully extracted Reddit content from ${url}`);
+          console.log(`✅ Successfully extracted Reddit content from ${url}`);
           break;
         }
       }
     }
   }
   
-  // Process all URLs (skip the one we extracted from if successful)
   for (const url of allUrls) {
-    // Skip redd.it URLs if we successfully extracted content from them
     if (extractedResult && url.includes('redd.it/')) {
-      console.log(`вЏ­пёЏ Skipping ${url} (already extracted Reddit content)`);
+      console.log(`⏭️ Skipping ${url} (already extracted Reddit content)`);
       continue;
     }
     
     const cleanedUrl = cleanUrl(url);
     
-    // Skip duplicates
     if (seenUrls.has(cleanedUrl)) {
-      console.log(`рџљ« Duplicate skipped: ${cleanedUrl}`);
+      console.log(`🚫 Duplicate skipped: ${cleanedUrl}`);
       continue;
     }
     seenUrls.add(cleanedUrl);
     
     const urlLower = cleanedUrl.toLowerCase();
     
-    // Twitter/X links are always allowed
     if (urlLower.includes('x.com/') || urlLower.includes('twitter.com/')) {
       allowedUrls.push(cleanedUrl);
       continue;
     }
     
-    // 🔁 RedGIFs are NOT allowed yet – we store them as a last resort fallback
-    if (urlLower.includes('redgifs.com')) {
-      redgifFallbackUrls.push(cleanedUrl);
-      console.log(`рџ“¦ Stored RedGIFs link for fallback: ${cleanedUrl}`);
-      continue; // Don't add to allowed or blocked yet
-    }
-    
-    // Check allowed extensions
     let hasAllowedExtension = false;
     for (const ext of ALLOWED_EXTENSIONS) {
       if (urlLower.includes(ext) || urlLower.endsWith(ext)) {
@@ -448,10 +408,8 @@ client.on('messageCreate', async (message) => {
     }
   }
   
-  // Combine all allowed URLs
   const allAllowedUrls = [...allowedUrls];
   if (extractedResult) {
-    // Add extracted URLs (checking for duplicates)
     for (const extractedUrl of extractedResult.urls) {
       if (!seenUrls.has(extractedUrl)) {
         allAllowedUrls.push(extractedUrl);
@@ -460,40 +418,20 @@ client.on('messageCreate', async (message) => {
     }
   }
   
-  // 🆕 FALLBACK: If we have NO allowed URLs but we collected RedGIFs links, use them
-  if (allAllowedUrls.length === 0 && redgifFallbackUrls.length > 0) {
-    console.log(`⚠️ No media found – falling back to RedGIFs links`);
-    allAllowedUrls.push(...redgifFallbackUrls);
-    // Also log this fallback event
-    try {
-      const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
-      if (logChannel) {
-        await logChannel.send(
-          `⚠️ **Fallback activated** – No Discord‑friendly media found, using RedGIFs links.\n` +
-          `• From: **${message.author.tag}**\n` +
-          `• RedGIFs URLs: ${redgifFallbackUrls.length}`
-        );
-      }
-    } catch (error) {
-      console.error('Failed to send fallback log:', error);
-    }
-  }
-  
-  // Log analysis
   try {
     const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
     if (logChannel) {
       const extractionInfo = extractedResult ? 
-        `\nвЂў Reddit content: ${extractedResult.urls.length} items` +
+        `\n• Reddit content: ${extractedResult.urls.length} items` +
         (extractedResult.hasGallery ? ' (gallery)' : '') +
         (extractedResult.hasVideo ? ' (video)' : '') : '';
       
       await logChannel.send(
-        `рџ”— **Analysis:**\n` +
-        `вЂў From: **${message.author.tag}**\n` +
-        `вЂў Title: ${extractedResult ? extractedResult.title : postInfo.title}\n` +
-        `вЂў Subreddit: r/${extractedResult ? extractedResult.subreddit : postInfo.subreddit}\n` +
-        `вЂў URLs: ${allUrls.length} total, ${allAllowedUrls.length} allowed, ${blockedUrls.length} blocked` +
+        `🔎 **Analysis:**\n` +
+        `• From: **${message.author.tag}**\n` +
+        `• Title: ${extractedResult ? extractedResult.title : postInfo.title}\n` +
+        `• Subreddit: r/${extractedResult ? extractedResult.subreddit : postInfo.subreddit}\n` +
+        `• URLs: ${allUrls.length} total, ${allAllowedUrls.length} allowed, ${blockedUrls.length} blocked` +
         extractionInfo
       );
     }
@@ -501,28 +439,21 @@ client.on('messageCreate', async (message) => {
     console.error('Failed to send analysis log:', error);
   }
   
-  // If nothing allowed, just delete and return
   if (allAllowedUrls.length === 0 && blockedUrls.length > 0) {
     await message.delete();
     return;
   }
   
-  // Post cleaned message
   if (allAllowedUrls.length > 0) {
     try {
       await message.delete();
       
-      // Use extracted info if available, otherwise use post info
       const finalTitle = extractedResult ? extractedResult.title : postInfo.title;
       const finalSubreddit = extractedResult ? extractedResult.subreddit : postInfo.subreddit;
       const finalAuthor = extractedResult ? extractedResult.author : postInfo.author;
       const hasGallery = extractedResult ? extractedResult.hasGallery : false;
       const hasVideo = extractedResult ? extractedResult.hasVideo : false;
       
-      // 🕐 DELAY BEFORE REPOSTING – prevents rate‑limit issues
-      await delay(REPOST_DELAY_MS);
-      
-      // Use the new formatMessage function
       await formatMessage(
         message.channel,
         finalTitle,
@@ -533,18 +464,19 @@ client.on('messageCreate', async (message) => {
         hasVideo
       );
       
-      // Log success
+      await sleep(2000);
+      
       try {
         const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
         if (logChannel) {
           const extractionSuccess = extractedResult ? 
-            `\nвЂў Reddit content extracted: ${extractedResult.urls.length} items` : '';
+            `\n• Reddit content extracted: ${extractedResult.urls.length} items` : '';
           
           await logChannel.send(
-            `вњ… **Cleaned:**\n` +
-            `вЂў From: **${message.author.tag}**\n` +
-            `вЂў Posted: ${allAllowedUrls.length} URLs\n` +
-            `вЂў Blocked: ${blockedUrls.length} URLs` +
+            `✅ **Cleaned:**\n` +
+            `• From: **${message.author.tag}**\n` +
+            `• Posted: ${allAllowedUrls.length} URLs\n` +
+            `• Blocked: ${blockedUrls.length} URLs` +
             extractionSuccess
           );
         }
@@ -559,8 +491,8 @@ client.on('messageCreate', async (message) => {
         const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
         if (logChannel) {
           await logChannel.send(
-            `вќЊ **Error:** ${error.message}\n` +
-            `вЂў From: **${message.author.tag}**`
+            `❌ **Error:** ${error.message}\n` +
+            `• From: **${message.author.tag}**`
           );
         }
       } catch (logError) {
@@ -572,7 +504,7 @@ client.on('messageCreate', async (message) => {
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) {
-  console.error('вќЊ BOT_TOKEN not set!');
+  console.error('❌ BOT_TOKEN not set!');
   process.exit(1);
 }
 
