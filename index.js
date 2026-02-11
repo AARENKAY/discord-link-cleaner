@@ -112,30 +112,52 @@ const formatMessage = async (channel, title, subreddit, author, urls, hasGallery
   else if (hasVideo) {
     message += `*Video/Gif*\n\n`;
     for (const url of urls) {
-      message += `${url}\n\n`;
+      message += `[Video/Gif](${url})\n\n`; // Embed the video URL with a clickable text
     }
   } 
-  // Handling Image URLs (group of 5)
+  // Handling Image and GIF URLs (group of 5)
   else if (urls.length > 1) {
     message += `*Images:* ${urls.length}\n\n`;
 
     // Split the URLs into groups of 5
     for (let i = 0; i < urls.length; i += 5) {
       const group = urls.slice(i, i + 5);
-      const imageLinks = group.map((url, index) => {
-        const picNumber = index + 1 + i; // Adjusted index to reflect the full list
-        return `[Pic${picNumber}](${url})`;
-      }).join(' ');
       
-      message += `${imageLinks}\n\n`;
-
+      for (const url of group) {
+        // Check if the URL is a GIF
+        if (url.toLowerCase().endsWith('.gif')) {
+          message += `*[Gif](${url})*\n\n`;
+        }
+        // Check if the URL is an image (JPEG, PNG, JPG, WebP)
+        else if (url.toLowerCase().endsWith('.jpg') || url.toLowerCase().endsWith('.jpeg') || 
+                 url.toLowerCase().endsWith('.png') || url.toLowerCase().endsWith('.webp')) {
+          message += `[Pic](${url})\n\n`;
+        }
+        // For other media types (optional, like video or audio)
+        else {
+          message += `*[Media](${url})*\n\n`;
+        }
+      }
+      
       // Send the message part after every group of 5
       await channel.send(message);
       message = ''; // Reset the message for the next group
     }
   } else {
     for (const url of urls) {
-      message += `${url}\n\n`;
+      // Check if the URL is a GIF
+      if (url.toLowerCase().endsWith('.gif')) {
+        message += `*[Gif](${url})*\n\n`;
+      }
+      // Check if the URL is an image (JPEG, PNG, JPG, WebP)
+      else if (url.toLowerCase().endsWith('.jpg') || url.toLowerCase().endsWith('.jpeg') || 
+               url.toLowerCase().endsWith('.png') || url.toLowerCase().endsWith('.webp')) {
+        message += `[Pic](${url})\n\n`;
+      }
+      // For other media types (optional, like video or audio)
+      else {
+        message += `*[Media](${url})*\n\n`;
+      }
     }
   }
   
@@ -143,7 +165,7 @@ const formatMessage = async (channel, title, subreddit, author, urls, hasGallery
   if (message.trim()) {
     await channel.send(message);
   }
-  await channel.send(`━━━━━━━━━━`);
+  await channel.send(`━━━━━━━━━━━━━━━━━━━━`);
 };
 
 // ========== REDDIT CONTENT EXTRACTOR WITH SMART FALLBACK_URL SEARCH ==========
