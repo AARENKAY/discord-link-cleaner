@@ -88,160 +88,13 @@ const findFallbackUrl = (obj) => {
     for (const key in obj) {
       const result = findFallbackUrl(obj[key]);
       if (result) {
-        return result;  // Return the first matching fallback_url
+        return result;
       }
     }
   }
-  return null;  // No fallback_url found
+  return null;
 };
 
-const extractRedditContent = async (redditUrl) => {
-  try {
-    console.log(`🎬 Extracting Reddit content from: ${redditUrl}`);
-    
-    // Clean the URL first - remove trailing slash
-    const cleanPostUrl = redditUrl.replace(/\/$/, '');
-    
-    // Add .json to get the JSON data
-    const jsonUrl = `${cleanPostUrl}.json`;
-    
-    console.log(`📡 Fetching: ${jsonUrl}`);
-    
-    const response = await axios.get(jsonUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Referer': 'https://www.reddit.com/',
-        'Origin': 'https://www.reddit.com',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-origin'
-      },
-      maxRedirects: 5,
-      timeout: 10000,
-      validateStatus: (status) => status < 500
-    });
-    
-    // Check if we got a valid response
-    if (response.status !== 200) {
-      console.log(`❌ Reddit API returned status ${response.status}`);
-      
-      // Try fallback with mobile API
-      try {
-        const postId = redditUrl.split('/comments/')[1]?.split('/')[0];
-        if (postId) {
-          console.log(`🔄 Trying mobile API for post ID: ${postId}`);
-          const mobileUrl = `https://www.reddit.com/comments/${postId}.json`;
-          
-          const mobileResponse = await axios.get(mobileUrl, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1',
-              'Accept': 'application/json'
-            },
-            timeout: 5000
-          });
-          
-          if (mobileResponse.status === 200) {
-            const mobileData = mobileResponse.data;
-            // Re-use findPostData on mobile response
-            const findPostData = (obj) => {
-              if (!obj || typeof obj !== 'object') return null;
-              if (obj.title && obj.subreddit) return obj;
-              if (Array.isArray(obj) && obj[0]?.data?.children?.[0]?.data?.title) {
-                return obj[0].data.children[0].data;
-              }
-              if (obj.data?.children?.[0]?.data?.title) {
-                return obj.data.children[0].data;
-              }
-              if (Array.isArray(obj)) {
-                for (let i = 0; i < obj.length; i++) {
-                  const result = findPostData(obj[i]);
-                  if (result) return result;
-                }
-              } else {
-                for (const key in obj) {
-                  const result = findPostData(obj[key]);
-                  if (result) return result;
-                }
-              }
-              return null;
-            };
-            
-            const postData = findPostData(mobileData);
-            if (postData) {
-              console.log(`✅ Success with mobile API`);
-              return processPostData(postData);
-            }
-          }
-        }
-      } catch (mobileError) {
-        console.log(`❌ Mobile API also failed: ${mobileError.message}`);
-      }
-      
-      return null;
-    }
-    
-    const data = response.data;
-    let postData = null;
-    
-    // Function to search for post data recursively
-    const findPostData = (obj) => {
-      if (!obj || typeof obj !== 'object') return null;
-      
-      // Check if this looks like post data (direct format)
-      if (obj.title && obj.subreddit) {
-        return obj;
-      }
-      
-      // Check if this is the new array format with Listing objects
-      if (Array.isArray(obj) && obj[0]?.data?.children?.[0]?.data?.title) {
-        return obj[0].data.children[0].data;
-      }
-      
-      // Check if this is a single Listing object format
-      if (obj.data?.children?.[0]?.data?.title) {
-        return obj.data.children[0].data;
-      }
-      
-      // Search in arrays and objects
-      if (Array.isArray(obj)) {
-        for (let i = 0; i < obj.length; i++) {
-          const result = findPostData(obj[i]);
-          if (result) return result;
-        }
-      } else {
-        for (const key in obj) {
-          const result = findPostData(obj[key]);
-          if (result) return result;
-        }
-      }
-      
-      return null;
-    };
-    
-    postData = findPostData(data);
-    
-    if (!postData) {
-      console.log('❌ Could not find post data in Reddit JSON');
-      return null;
-    }
-    
-    return processPostData(postData);
-    
-  } catch (error) {
-    console.error(`❌ Error extracting Reddit content:`, error.message);
-    if (error.response) {
-      console.error(`Response status: ${error.response.status}`);
-    }
-    return null;
-  }
-};
-
-// Separate function to process post data once we have it
 const processPostData = (postData) => {
   console.log(`✅ Found Reddit post: "${postData.title}" in r/${postData.subreddit}`);
   
@@ -343,6 +196,152 @@ const processPostData = (postData) => {
     hasGallery: !!postData.media_metadata,
     hasVideo: hasVideo
   };
+};
+
+const extractRedditContent = async (redditUrl) => {
+  try {
+    console.log(`🎬 Extracting Reddit content from: ${redditUrl}`);
+    
+    // Clean the URL first - remove trailing slash
+    const cleanPostUrl = redditUrl.replace(/\/$/, '');
+    
+    // Add .json to get the JSON data
+    const jsonUrl = `${cleanPostUrl}.json`;
+    
+    console.log(`📡 Fetching: ${jsonUrl}`);
+    
+    const response = await axios.get(jsonUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Referer': 'https://www.reddit.com/',
+        'Origin': 'https://www.reddit.com',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin'
+      },
+      maxRedirects: 5,
+      timeout: 10000,
+      validateStatus: (status) => status < 500
+    });
+    
+    // Check if we got a valid response
+    if (response.status !== 200) {
+      console.log(`❌ Reddit API returned status ${response.status}`);
+      
+      // Try fallback with mobile API
+      try {
+        const postId = redditUrl.split('/comments/')[1]?.split('/')[0];
+        if (postId) {
+          console.log(`🔄 Trying mobile API for post ID: ${postId}`);
+          const mobileUrl = `https://www.reddit.com/comments/${postId}.json`;
+          
+          const mobileResponse = await axios.get(mobileUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1',
+              'Accept': 'application/json'
+            },
+            timeout: 5000
+          });
+          
+          if (mobileResponse.status === 200) {
+            const mobileData = mobileResponse.data;
+            
+            const findPostData = (obj) => {
+              if (!obj || typeof obj !== 'object') return null;
+              if (obj.title && obj.subreddit) return obj;
+              if (Array.isArray(obj) && obj[0]?.data?.children?.[0]?.data?.title) {
+                return obj[0].data.children[0].data;
+              }
+              if (obj.data?.children?.[0]?.data?.title) {
+                return obj.data.children[0].data;
+              }
+              if (Array.isArray(obj)) {
+                for (let i = 0; i < obj.length; i++) {
+                  const result = findPostData(obj[i]);
+                  if (result) return result;
+                }
+              } else {
+                for (const key in obj) {
+                  const result = findPostData(obj[key]);
+                  if (result) return result;
+                }
+              }
+              return null;
+            };
+            
+            const postData = findPostData(mobileData);
+            if (postData) {
+              console.log(`✅ Success with mobile API`);
+              return processPostData(postData);
+            }
+          }
+        }
+      } catch (mobileError) {
+        console.log(`❌ Mobile API also failed: ${mobileError.message}`);
+      }
+      
+      return null;
+    }
+    
+    const data = response.data;
+    let postData = null;
+    
+    // Function to search for post data recursively
+    const findPostData = (obj) => {
+      if (!obj || typeof obj !== 'object') return null;
+      
+      // Check if this looks like post data (direct format)
+      if (obj.title && obj.subreddit) {
+        return obj;
+      }
+      
+      // Check if this is the new array format with Listing objects
+      if (Array.isArray(obj) && obj[0]?.data?.children?.[0]?.data?.title) {
+        return obj[0].data.children[0].data;
+      }
+      
+      // Check if this is a single Listing object format
+      if (obj.data?.children?.[0]?.data?.title) {
+        return obj.data.children[0].data;
+      }
+      
+      // Search in arrays and objects
+      if (Array.isArray(obj)) {
+        for (let i = 0; i < obj.length; i++) {
+          const result = findPostData(obj[i]);
+          if (result) return result;
+        }
+      } else {
+        for (const key in obj) {
+          const result = findPostData(obj[key]);
+          if (result) return result;
+        }
+      }
+      
+      return null;
+    };
+    
+    postData = findPostData(data);
+    
+    if (!postData) {
+      console.log('❌ Could not find post data in Reddit JSON');
+      return null;
+    }
+    
+    return processPostData(postData);
+    
+  } catch (error) {
+    console.error(`❌ Error extracting Reddit content:`, error.message);
+    if (error.response) {
+      console.error(`Response status: ${error.response.status}`);
+    }
+    return null;
+  }
 };
 
 // ========== URL RESOLVER ==========
@@ -474,15 +473,25 @@ client.on('messageCreate', async (message) => {
     console.error('Failed to send log:', error);
   }
   
-  // Extract URLs - FIXED to handle angle brackets
-  const urlPattern = /https?:\/\/[^\s\"]+/gi;
-  // Remove angle brackets before matching
-  const cleanContent = message.content.replace(/<|>/g, '');
+  // ===== FIXED URL EXTRACTION =====
+  // Extract URLs - handles parentheses, brackets, angle brackets, and markdown
+  const urlPattern = /https?:\/\/[^\s<>\)\]\"]+/gi;
+  // Remove angle brackets first
+  const cleanContent = message.content.replace(/[<>]/g, '');
   const allUrls = cleanContent.match(urlPattern);
   
   if (!allUrls) return;
   
-  // Extract post info from message
+  // Clean each URL by removing trailing punctuation and markdown
+  const cleanedUrls = allUrls.map(url => {
+    // Remove common trailing characters: ), ], *, `, :, ,, ., etc.
+    return url.replace(/[\)\]\*\`:;,.\-]+$/, '');
+  });
+  
+  // Use cleanedUrls for processing
+  const urlsToProcess = [...new Set(cleanedUrls)]; // Remove duplicates
+  
+  // Extract post info from message (keep using original message.content for this)
   const postInfo = extractPostInfo(message.content);
   
   // Process URLs
@@ -492,7 +501,7 @@ client.on('messageCreate', async (message) => {
   let extractedResult = null;
   
   // First, try to extract content from redd.it URLs
-  for (const url of allUrls) {
+  for (const url of urlsToProcess) {
     if (url.includes('redd.it/')) {
       // Resolve the short URL first
       const resolvedUrl = await resolveUrl(url);
@@ -509,7 +518,7 @@ client.on('messageCreate', async (message) => {
   }
   
   // Process all URLs (skip the one we extracted from if successful)
-  for (const url of allUrls) {
+  for (const url of urlsToProcess) {
     // Skip redd.it URLs if we successfully extracted content from them
     if (extractedResult && url.includes('redd.it/')) {
       console.log(`⏭️ Skipping ${url} (already extracted Reddit content)`);
@@ -590,7 +599,7 @@ client.on('messageCreate', async (message) => {
         `• From: **${message.author.tag}**\n` +
         `• Title: ${extractedResult ? extractedResult.title : postInfo.title}\n` +
         `• Subreddit: r/${extractedResult ? extractedResult.subreddit : postInfo.subreddit}\n` +
-        `• URLs: ${allUrls.length} total, ${allAllowedUrls.length} allowed, ${blockedUrls.length} blocked` +
+        `• URLs: ${urlsToProcess.length} total, ${allAllowedUrls.length} allowed, ${blockedUrls.length} blocked` +
         extractionInfo
       );
     }
@@ -598,7 +607,7 @@ client.on('messageCreate', async (message) => {
     console.error('Failed to send analysis log:', error);
   }
   
-  // If nothing allowed, just delete and return
+   // If nothing allowed, just delete and return
   if (allAllowedUrls.length === 0 && blockedUrls.length > 0) {
     await message.delete();
     console.log(`🗑️ Deleted message - no allowed URLs`);
@@ -673,5 +682,3 @@ if (!BOT_TOKEN) {
 }
 
 client.login(BOT_TOKEN);
-      
-  
