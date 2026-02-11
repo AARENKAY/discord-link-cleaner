@@ -288,8 +288,9 @@ const formatMessage = (title, subreddit, author, urls, hasGallery = false, hasVi
     message += `*Images:* ${urls.length}\n\n`;
   } 
   for (const url of urls) {
-    message += `${url}\n`;
+    message += `${url}\n\n`;
   } 
+  message += `▪️▫️▪️▫️▪️▫️\n`;
   return message;
 };
 
@@ -396,21 +397,36 @@ client.on('messageCreate', async (message) => {
     // Twitter/X links are always allowed
     if (urlLower.includes('x.com/') || urlLower.includes('twitter.com/')) {
       allowedUrls.push(cleanedUrl);
+      console.log(`✅ Allowed Twitter/X: ${cleanedUrl}`);
       continue;
     }
     
+    // Check if this URL is one of our extracted Reddit video URLs
+    const isExtractedVideo = extractedResult?.urls?.includes(cleanedUrl);
+    
     // Check allowed extensions
     let hasAllowedExtension = false;
-    for (const ext of ALLOWED_EXTENSIONS) {
-      if (urlLower.includes(ext) || urlLower.endsWith(ext)) {
-        hasAllowedExtension = true;
-        allowedUrls.push(cleanedUrl);
-        break;
+    
+    if (isExtractedVideo) {
+      // Extracted Reddit videos ALWAYS have .mp4 extension - ALLOW THEM
+      hasAllowedExtension = true;
+      allowedUrls.push(cleanedUrl);
+      console.log(`✅ Allowed extracted Reddit video: ${cleanedUrl}`);
+    } else {
+      // Check original URLs against allowed extensions
+      for (const ext of ALLOWED_EXTENSIONS) {
+        if (urlLower.includes(ext) || urlLower.endsWith(ext)) {
+          hasAllowedExtension = true;
+          allowedUrls.push(cleanedUrl);
+          console.log(`✅ Allowed URL with extension: ${cleanedUrl}`);
+          break;
+        }
       }
     }
     
     if (!hasAllowedExtension) {
       blockedUrls.push(cleanedUrl);
+      console.log(`🚫 Blocked: ${cleanedUrl} (no allowed extension)`);
     }
   }
   
@@ -422,6 +438,7 @@ client.on('messageCreate', async (message) => {
       if (!seenUrls.has(extractedUrl)) {
         allAllowedUrls.push(extractedUrl);
         seenUrls.add(extractedUrl);
+        console.log(`➕ Added extracted URL: ${extractedUrl}`);
       }
     }
   }
@@ -451,6 +468,7 @@ client.on('messageCreate', async (message) => {
   // If nothing allowed, just delete and return
   if (allAllowedUrls.length === 0 && blockedUrls.length > 0) {
     await message.delete();
+    console.log(`🗑️ Deleted message - no allowed URLs`);
     return;
   }
   
@@ -476,6 +494,7 @@ client.on('messageCreate', async (message) => {
       );
       
       await message.channel.send(formattedMessage);
+      console.log(`✅ Posted cleaned message with ${allAllowedUrls.length} URLs`);
       
       // Log success
       try {
@@ -497,7 +516,7 @@ client.on('messageCreate', async (message) => {
       }
       
     } catch (error) {
-      console.error(`Error: ${error.message}`);
+      console.error(`❌ Error: ${error.message}`);
       
       try {
         const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
