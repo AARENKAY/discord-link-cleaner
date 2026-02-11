@@ -75,6 +75,7 @@ const cleanUrl = (url) => {
   
   return cleaned;
 };
+
 // ========== REDDIT CONTENT EXTRACTOR ==========
 const extractRedditContent = async (redditUrl) => {
   try {
@@ -91,14 +92,25 @@ const extractRedditContent = async (redditUrl) => {
     });
     
     const data = response.data;
+    let postData = null;
     
     // Function to search for post data recursively
     const findPostData = (obj) => {
       if (!obj || typeof obj !== 'object') return null;
       
-      // Check if this looks like post data
+      // Check if this looks like post data (direct format)
       if (obj.title && obj.subreddit) {
         return obj;
+      }
+      
+      // Check if this is the new array format with Listing objects
+      if (Array.isArray(obj) && obj[0]?.data?.children?.[0]?.data?.title) {
+        return obj[0].data.children[0].data;
+      }
+      
+      // Check if this is a single Listing object format
+      if (obj.data?.children?.[0]?.data?.title) {
+        return obj.data.children[0].data;
       }
       
       // Search in arrays and objects
@@ -117,10 +129,11 @@ const extractRedditContent = async (redditUrl) => {
       return null;
     };
     
-    const postData = findPostData(data);
+    postData = findPostData(data);
     
     if (!postData) {
       console.log('❌ Could not find post data in Reddit JSON');
+      console.log('Data structure received:', JSON.stringify(data).substring(0, 500) + '...');
       return null;
     }
     
@@ -159,7 +172,7 @@ const extractRedditContent = async (redditUrl) => {
     // 2. Check for video content - MULTIPLE LOCATIONS!
     let videoUrl = null;
     
-    // Location 1: preview.reddit_video_preview.fallback_url (NEW - this is where it is!)
+    // Location 1: preview.reddit_video_preview.fallback_url
     if (postData.preview?.reddit_video_preview?.fallback_url) {
       videoUrl = postData.preview.reddit_video_preview.fallback_url;
       console.log(`🎥 Found video in preview.reddit_video_preview: ${videoUrl}`);
@@ -168,6 +181,16 @@ const extractRedditContent = async (redditUrl) => {
     else if (postData.crosspost_parent_list?.[0]?.preview?.reddit_video_preview?.fallback_url) {
       videoUrl = postData.crosspost_parent_list[0].preview.reddit_video_preview.fallback_url;
       console.log(`🎥 Found video in crosspost preview: ${videoUrl}`);
+    }
+    // Location 3: secure_media.reddit_video.fallback_url (for Reddit hosted videos)
+    else if (postData.secure_media?.reddit_video?.fallback_url) {
+      videoUrl = postData.secure_media.reddit_video.fallback_url;
+      console.log(`🎥 Found video in secure_media.reddit_video: ${videoUrl}`);
+    }
+    // Location 4: media.reddit_video.fallback_url (alternate location)
+    else if (postData.media?.reddit_video?.fallback_url) {
+      videoUrl = postData.media.reddit_video.fallback_url;
+      console.log(`🎥 Found video in media.reddit_video: ${videoUrl}`);
     }
     
     if (videoUrl) {
@@ -182,7 +205,8 @@ const extractRedditContent = async (redditUrl) => {
       // Check if it's a direct image/video link
       if (urlLower.includes('.jpg') || urlLower.includes('.jpeg') || 
           urlLower.includes('.png') || urlLower.includes('.gif') ||
-          urlLower.includes('.mp4') || urlLower.includes('.webm') ||
+          urlLower.includes('.gifv') || urlLower.includes('.mp4') || 
+          urlLower.includes('.webm') || urlLower.includes('.webp') ||
           urlLower.includes('i.redd.it') || urlLower.includes('v.redd.it')) {
         const cleanedUrl = cleanUrl(postData.url);
         extractedUrls.push(cleanedUrl);
@@ -206,8 +230,25 @@ const extractRedditContent = async (redditUrl) => {
       }
     }
     
+    // 5. Check for embeds like Redgifs in secure_media
+    if (postData.secure_media?.oembed?.provider_name === 'RedGIFs') {
+      const redgifsUrl = postData.url || postData.url_overridden_by_dest;
+      if (redgifsUrl && redgifsUrl.includes('redgifs.com')) {
+        const cleanedUrl = cleanUrl(redgifsUrl);
+        extractedUrls.push(cleanedUrl);
+        console.log(`🎬 Extracted RedGIFs embed: ${cleanedUrl}`);
+      }
+    }
+    
     if (extractedUrls.length === 0) {
       console.log('❌ No media URLs extracted from Reddit post');
+      console.log('Post data available:', {
+        url: postData.url,
+        url_overridden_by_dest: postData.url_overridden_by_dest,
+        hasPreview: !!postData.preview,
+        hasSecureMedia: !!postData.secure_media,
+        hasMedia: !!postData.media
+      });
       return null;
     }
     
@@ -220,15 +261,19 @@ const extractRedditContent = async (redditUrl) => {
       hasGallery: !!postData.media_metadata,
       hasVideo: !!(postData.secure_media?.reddit_video || 
                   postData.media?.reddit_video || 
-                  postData.preview?.reddit_video_preview)
+                  postData.preview?.reddit_video_preview ||
+                  postData.crosspost_parent_list?.[0]?.preview?.reddit_video_preview)
     };
     
   } catch (error) {
     console.error(`❌ Error extracting Reddit content:`, error.message);
+    if (error.response) {
+      console.error(`Response status: ${error.response.status}`);
+      console.error(`Response data: ${JSON.stringify(error.response.data).substring(0, 200)}`);
+    }
     return null;
   }
 };
-
 
 // ========== URL RESOLVER ==========
 const resolveUrl = async (shortUrl) => {
@@ -253,8 +298,6 @@ const resolveUrl = async (shortUrl) => {
     return null;
   }
 };
-
-
 
 // ========== MESSAGE FORMATTING ==========
 const formatMessage = (title, subreddit, author, urls, hasGallery = false, hasVideo = false) => {
