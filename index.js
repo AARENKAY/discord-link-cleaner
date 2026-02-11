@@ -89,35 +89,60 @@ const formatMessage = async (channel, title, subreddit, author, urls, hasGallery
   let message = `# ${title}\n\n`;
   message += `*Posted in* **r/${subreddit}** *by* **${author}**\n\n`;
   
+  // Handling Gallery URLs (group of 5)
   if (hasGallery && urls.length > 1) {
     message += `*Gallery:* ${urls.length} images\n\n`;
-    
-    const galleryLinks = urls.map((url, index) => {
-      const picNumber = index + 1;
-      return `[Pic${picNumber}](${url})`;
-    }).join(' ');
-    
-    message += `${galleryLinks}\n\n`;
-  } else if (hasVideo) {
+
+    // Split the URLs into groups of 5
+    for (let i = 0; i < urls.length; i += 5) {
+      const group = urls.slice(i, i + 5);
+      const galleryLinks = group.map((url, index) => {
+        const picNumber = index + 1 + i; // Adjusted index to reflect the full list
+        return `[Pic${picNumber}](${url})`;
+      }).join(' ');
+      
+      message += `${galleryLinks}\n\n`;
+
+      // Send the message part after every group of 5
+      await channel.send(message);
+      message = ''; // Reset the message for the next group
+    }
+  } 
+  // Handling Video URLs
+  else if (hasVideo) {
     message += `*Video/Gif*\n\n`;
     for (const url of urls) {
       message += `${url}\n\n`;
     }
-  } else if (urls.length > 1) {
+  } 
+  // Handling Image URLs (group of 5)
+  else if (urls.length > 1) {
     message += `*Images:* ${urls.length}\n\n`;
-    const imageLinks = urls.map((url, index) => {
-      const picNumber = index + 1;
-      return `[Pic${picNumber}](${url})`;
-    }).join(' ');
-    
-    message += `${imageLinks}\n\n`;
+
+    // Split the URLs into groups of 5
+    for (let i = 0; i < urls.length; i += 5) {
+      const group = urls.slice(i, i + 5);
+      const imageLinks = group.map((url, index) => {
+        const picNumber = index + 1 + i; // Adjusted index to reflect the full list
+        return `[Pic${picNumber}](${url})`;
+      }).join(' ');
+      
+      message += `${imageLinks}\n\n`;
+
+      // Send the message part after every group of 5
+      await channel.send(message);
+      message = ''; // Reset the message for the next group
+    }
   } else {
     for (const url of urls) {
       message += `${url}\n\n`;
     }
   }
   
-  await channel.send(message);
+  // Send final message to the channel if it's not already sent
+  if (message.trim()) {
+    await channel.send(message);
+  }
   await channel.send(`━━━━━━━━━━`);
 };
 
