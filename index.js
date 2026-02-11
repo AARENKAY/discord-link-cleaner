@@ -164,7 +164,7 @@ const formatMessage = async (channel, title, subreddit, author, urls, hasGallery
   if (message.trim()) {
     await channel.send(message);
   }
-  await channel.send(`⟪━━━━━━▫️━━━━━━▫️━━━━━━▫️━━━━━━▫️━━━━━━⟫`);
+  await channel.send(`═════════════════════════════════`);
 };
 
 // ========== REDDIT CONTENT EXTRACTOR WITH SMART FALLBACK_URL SEARCH ==========
