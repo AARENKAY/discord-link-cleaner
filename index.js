@@ -277,7 +277,7 @@ const resolveUrl = async (shortUrl) => {
 };
 
 // ========== MESSAGE FORMATTING ==========
-const formatMessage = (title, subreddit, author, urls, hasGallery = false, hasVideo = false) => {
+const formatMessage = async (channel, title, subreddit, author, urls, hasGallery = false, hasVideo = false) => {
   let message = `# ${title}\n\n`;
   message += `*Posted in* **r/${subreddit}** *by* **${author}**\n\n`; 
   if (hasGallery && urls.length > 1) {
@@ -289,9 +289,13 @@ const formatMessage = (title, subreddit, author, urls, hasGallery = false, hasVi
   } 
   for (const url of urls) {
     message += `${url}\n\n`;
-  } 
-  message += `▪️▫️▪️▫️▪️▫️\n`;
-  return message;
+  }
+  
+  // Send the main message
+  await channel.send(message);
+  
+  // Send divider as a second immediate message
+  await channel.send(`▪️▫️▪️▫️▪️▫️`);
 };
 
 const extractPostInfo = (messageContent) => {
@@ -484,7 +488,8 @@ client.on('messageCreate', async (message) => {
       const hasGallery = extractedResult ? extractedResult.hasGallery : false;
       const hasVideo = extractedResult ? extractedResult.hasVideo : false;
       
-      const formattedMessage = formatMessage(
+      await formatMessage(
+        message.channel,
         finalTitle,
         finalSubreddit,
         finalAuthor,
@@ -493,7 +498,6 @@ client.on('messageCreate', async (message) => {
         hasVideo
       );
       
-      await message.channel.send(formattedMessage);
       console.log(`✅ Posted cleaned message with ${allAllowedUrls.length} URLs`);
       
       // Log success
