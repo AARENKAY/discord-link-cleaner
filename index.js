@@ -58,6 +58,11 @@ const cleanUrl = (url) => {
   
   let cleaned = url;
   
+  // Normalize "www." in RedGIF URLs
+  if (cleaned.includes('www.redgifs.com')) {
+    cleaned = cleaned.replace('www.', '');
+  }
+  
   // Convert preview.redd.it to i.redd.it
   if (cleaned.includes('preview.redd.it')) {
     const match = cleaned.match(/preview\.redd\.it\/([^?]+)/);
@@ -131,7 +136,8 @@ const extractRedditContent = async (redditUrl) => {
     });
     
     const data = response.data;
-    
+    console.log('Fetched Reddit JSON:', data); // Log for debugging
+
     const findPostData = (obj) => {
       if (!obj || typeof obj !== 'object') return null;
       if (obj.title && obj.subreddit) return obj;
@@ -148,10 +154,13 @@ const extractRedditContent = async (redditUrl) => {
       }
       return null;
     };
-    
+
     const findFallbackUrl = (obj) => {
       if (!obj || typeof obj !== 'object') return null;
       if (obj.fallback_url && typeof obj.fallback_url === 'string') return obj.fallback_url;
+      if (obj.reddit_video_preview && obj.reddit_video_preview.fallback_url) {
+        return obj.reddit_video_preview.fallback_url;
+      }
       if (Array.isArray(obj)) {
         for (let i = 0; i < obj.length; i++) {
           const result = findFallbackUrl(obj[i]);
@@ -165,7 +174,7 @@ const extractRedditContent = async (redditUrl) => {
       }
       return null;
     };
-    
+
     const postData = findPostData(data);
     
     if (!postData) {
