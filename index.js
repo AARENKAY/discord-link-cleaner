@@ -125,7 +125,7 @@ const formatMessage = async (channel, title, subreddit, author, urls, hasGallery
       for (const url of group) {
         // Check if the URL is a GIF
         if (url.toLowerCase().endsWith('.gif')) {
-          message += `*[Gif](${url})*\n\n`;
+          message += `*Gif:* ${url}\n\n`;
         }
         // Check if the URL is an image (JPEG, PNG, JPG, WebP)
         else if (url.toLowerCase().endsWith('.jpg') || url.toLowerCase().endsWith('.jpeg') || 
