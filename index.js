@@ -91,7 +91,7 @@ const formatMessage = async (channel, title, subreddit, author, urls, hasGallery
   
   // Handling Gallery URLs (group of 5)
   if (hasGallery && urls.length > 1) {
-    message += `*Gallery:* ${urls.length} images\n\n`;
+    message += `**Gallery:** ${urls.length} images\n\n`;
 
     // Split the URLs into groups of 5
     for (let i = 0; i < urls.length; i += 5) {
@@ -116,7 +116,7 @@ const formatMessage = async (channel, title, subreddit, author, urls, hasGallery
   } 
   // Handling Image and GIF URLs (group of 5)
   else if (urls.length > 1) {
-    message += `*Images:* ${urls.length}\n\n`;
+    message += `**Images:** ${urls.length}\n\n`;
 
     // Split the URLs into groups of 5
     for (let i = 0; i < urls.length; i += 5) {
@@ -125,7 +125,7 @@ const formatMessage = async (channel, title, subreddit, author, urls, hasGallery
       for (const url of group) {
         // Check if the URL is a GIF
         if (url.toLowerCase().endsWith('.gif')) {
-          message += `*Gif:* ${url}\n\n`;
+          message += `[Gif](${url})\n\n`;
         }
         // Check if the URL is an image (JPEG, PNG, JPG, WebP)
         else if (url.toLowerCase().endsWith('.jpg') || url.toLowerCase().endsWith('.jpeg') || 
@@ -134,7 +134,7 @@ const formatMessage = async (channel, title, subreddit, author, urls, hasGallery
         }
         // For other media types (optional, like video or audio)
         else {
-          message += `*[Media](${url})*\n\n`;
+          message += `[Media](${url})\n\n`;
         }
       }
       
@@ -146,7 +146,7 @@ const formatMessage = async (channel, title, subreddit, author, urls, hasGallery
     for (const url of urls) {
       // Check if the URL is a GIF
       if (url.toLowerCase().endsWith('.gif')) {
-        message += `*[Gif](${url})*\n\n`;
+        message += `[Gif](${url})\n\n`;
       }
       // Check if the URL is an image (JPEG, PNG, JPG, WebP)
       else if (url.toLowerCase().endsWith('.jpg') || url.toLowerCase().endsWith('.jpeg') || 
@@ -155,7 +155,7 @@ const formatMessage = async (channel, title, subreddit, author, urls, hasGallery
       }
       // For other media types (optional, like video or audio)
       else {
-        message += `*[Media](${url})*\n\n`;
+        message += `[Media](${url})\n\n`;
       }
     }
   }
