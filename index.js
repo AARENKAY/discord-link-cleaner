@@ -235,7 +235,21 @@ const extractRedditContent = async (redditUrl) => {
     const extractedUrls = [];
     let hasVideo = false;
     
-    const videoUrl = findFallbackUrl(postData);
+    // ===== Stable fallback_url detection =====
+	  let videoUrl = null;
+	
+	  // Prefer direct preview fallback when preview is enabled
+		if (postData.preview?.reddit_video_preview?.fallback_url &&
+		    postData.preview?.enabled !== false) {
+		
+		  videoUrl = postData.preview.reddit_video_preview.fallback_url;
+		  console.log('🎯 Using direct preview.reddit_video_preview fallback_url');
+		}
+		
+		// Otherwise use original recursive finder
+		if (!videoUrl) {
+		  videoUrl = findFallbackUrl(postData);
+		}
     if (videoUrl) {
       const cleanedUrl = cleanUrl(videoUrl);
       extractedUrls.push(cleanedUrl);
