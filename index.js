@@ -139,7 +139,7 @@ const sendLog = async (channelId, msg) => {
   try { (await client.channels.fetch(channelId))?.send(msg); } catch {}
 };
 
-client.once('ready', () => {
+client.once('clientReady', () => {
   console.log(`✅ Bot online as ${client.user.tag}`);
   client.user.setPresence({ activities: [{ name: 'Cleaning links...', type: ActivityType.Watching }], status: 'online' });
 });
