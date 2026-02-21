@@ -1,6 +1,5 @@
 const express = require('express');
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
-const axios = require('axios');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -174,19 +173,26 @@ const extractRedditContent = async (redditUrl) => {
   try {
     console.log(`🎬 Extracting Reddit content from: ${redditUrl}`);
     
-    const jsonUrl = `${redditUrl}.json`;
+    const jsonUrl = redditUrl
+	  .replace('www.reddit.com', 'api.reddit.com')
+	  .replace(/\/$/, '') + '.json';
 
-	await sleep(1200);  
-	  
-    const response = await axios.get(jsonUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      },
-      timeout: 5000
-    });
-    
-    const data = response.data;
-    console.log('Fetched Reddit JSON:', data); // Log for debugging
+	await sleep(1200); // keep delay
+
+	const response = await fetch(jsonUrl, {
+	  headers: {
+	    'User-Agent': 'discord:scatjav.link.cleaner:v1.0 (Node.js)',
+	    'Accept': 'application/json'
+	  }
+	});
+	
+	// 🔥 fetch does NOT throw on 404 — we check manually
+	if (!response.ok) {
+	  throw new Error(`HTTP ${response.status}`);
+	}
+	
+	const data = await response.json();
+    console.log('Successfully Fetched Reddit JSON'); // Log for debugging
 
     const findPostData = (obj) => {
       if (!obj || typeof obj !== 'object') return null;
@@ -354,20 +360,21 @@ const resolveUrl = async (shortUrl) => {
   try {
     console.log(`🔍 Resolving URL: ${shortUrl}`);
 
-	await sleep(1200);  
-    
-    const response = await axios.get(shortUrl, {
+    await sleep(1200); // keep your delay
+
+    const response = await fetch(shortUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'User-Agent': 'discord:scatjav.link.cleaner:v1.0 (Node.js)'
       },
-      maxRedirects: 5,
-      timeout: 5000
+      redirect: 'follow'
     });
-    
-    const finalUrl = response.request.res.responseUrl;
+
+    // 🔥 fetch automatically follows redirects
+    const finalUrl = response.url;
+
     console.log(`✅ Resolved: ${shortUrl} -> ${finalUrl}`);
-    
     return finalUrl;
+
   } catch (error) {
     console.error(`❌ Failed to resolve ${shortUrl}:`, error.message);
     return null;
@@ -469,6 +476,13 @@ client.on('messageCreate', async (message) => {
       continue;
     }
     
+    // ✅ ALWAYS allow redgifs watch links FIRST
+	if (urlLower.includes('redgifs.com')) {
+	  allowedUrls.push(cleanedUrl);
+	  console.log(`🎬 Allowed Redgifs link: ${cleanedUrl}`);
+	  continue;
+	}
+
     let hasAllowedExtension = false;
     for (const ext of ALLOWED_EXTENSIONS) {
       if (urlLower.includes(ext) || urlLower.endsWith(ext)) {
