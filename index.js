@@ -445,8 +445,13 @@ client.on('messageCreate', async (message) => {
   for (const url of allUrls) {
     if (url.includes('redd.it/')) {
       const resolvedUrl = await resolveUrl(url);
-      if (resolvedUrl) {
-        extractedResult = await extractRedditContent(resolvedUrl);
+		if (
+		  resolvedUrl &&
+		  !resolvedUrl.includes('i.redd.it') &&
+		  !resolvedUrl.includes('v.redd.it')
+		) {
+		  extractedResult = await extractRedditContent(resolvedUrl);
+		}
         if (extractedResult) {
           console.log(`✅ Successfully extracted Reddit content from ${url}`);
           break;
@@ -456,7 +461,7 @@ client.on('messageCreate', async (message) => {
   }
   
   for (const url of allUrls) {
-    if (extractedResult && url.includes('redd.it/')) {
+    if (extractedResult && (url.includes('redd.it/') || url.includes('reddit.com/'))) {
       console.log(`⏭️ Skipping ${url} (already extracted Reddit content)`);
       continue;
     }
