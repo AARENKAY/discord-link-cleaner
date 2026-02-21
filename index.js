@@ -175,7 +175,9 @@ const extractRedditContent = async (redditUrl) => {
     console.log(`🎬 Extracting Reddit content from: ${redditUrl}`);
     
     const jsonUrl = `${redditUrl}.json`;
-    
+
+	await sleep(1200);  
+	  
     const response = await axios.get(jsonUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -351,6 +353,8 @@ const extractRedditContent = async (redditUrl) => {
 const resolveUrl = async (shortUrl) => {
   try {
     console.log(`🔍 Resolving URL: ${shortUrl}`);
+
+	await sleep(1200);  
     
     const response = await axios.get(shortUrl, {
       headers: {
