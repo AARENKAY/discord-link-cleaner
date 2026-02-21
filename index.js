@@ -483,6 +483,16 @@ client.on('messageCreate', async (message) => {
 	  continue;
 	}
 
+	// ✅ NEW — Allow Reddit direct media (NO JSON extraction)
+    if (
+      urlLower.includes('i.redd.it') ||
+      urlLower.includes('v.redd.it')
+    ) {
+      allowedUrls.push(cleanedUrl);
+      console.log(`🖼️ Allowed Reddit media: ${cleanedUrl}`);
+      continue;
+    }
+	  
     let hasAllowedExtension = false;
     for (const ext of ALLOWED_EXTENSIONS) {
       if (urlLower.includes(ext) || urlLower.endsWith(ext)) {
