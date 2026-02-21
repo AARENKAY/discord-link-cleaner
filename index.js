@@ -458,7 +458,6 @@ client.on('messageCreate', async (message) => {
         }
       }
     }
-  }
   
   for (const url of allUrls) {
     if (extractedResult && (url.includes('redd.it/') || url.includes('reddit.com/'))) {
