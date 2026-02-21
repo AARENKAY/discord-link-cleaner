@@ -48,7 +48,7 @@ const ALLOWED_EXTENSIONS = [
   '.mp4', '.gif', '.gifv', '.webm', '.jpg', '.jpeg', '.png', '.webp'
 ];
 
-const LOG_CHANNEL_ID = '1470005338483982400';
+const LOG_CHANNEL_ID = '1474800528281042985';
 // ========== END CONFIG ==========
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
