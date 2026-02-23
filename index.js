@@ -18,13 +18,30 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Cache
 const redditCache = new Map();
-const CACHE_TTL = 5*60*1000;
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-// URL cleaning
+// --- User Agent Rotation ---
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
+  'Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/121.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/121.0'
+];
+
+function getRandomUserAgent() {
+  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+}
+
+// --- URL cleaning ---
 const cleanUrl = url => {
   if (!url) return url;
   let c = url.replace('www.redgifs.com', 'redgifs.com');
-  if (c.includes('preview.redd.it')) { let m = c.match(/preview\.redd\.it\/([^?]+)/); if (m) c = `https://i.redd.it/${m[1].split('?')[0]}`; }
+  if (c.includes('preview.redd.it')) { 
+    let m = c.match(/preview\.redd\.it\/([^?]+)/); 
+    if (m) c = `https://i.redd.it/${m[1].split('?')[0]}`; 
+  }
   if (c.match(/x\.com|twitter\.com/i)) c = c.replace(/https?:\/\/(www\.)?(x\.com|twitter\.com)/i, 'https://vxtwitter.com');
   return c.split('?')[0].replace(/\/+$/, '');
 };
@@ -33,8 +50,17 @@ const cleanUrl = url => {
 const deepFind = (obj, test) => {
   if (!obj || typeof obj !== 'object') return null;
   if (test(obj)) return obj;
-  if (Array.isArray(obj)) for (let v of obj) { let r = deepFind(v, test); if (r) return r; }
-  else for (let k in obj) { let r = deepFind(obj[k], test); if (r) return r; }
+  if (Array.isArray(obj)) {
+    for (let v of obj) { 
+      let r = deepFind(v, test); 
+      if (r) return r; 
+    }
+  } else {
+    for (let k in obj) { 
+      let r = deepFind(obj[k], test); 
+      if (r) return r; 
+    }
+  }
   return null;
 };
 
@@ -48,37 +74,62 @@ const formatMessage = async (ch, title, sub, author, urls, isGallery, isVideo) =
       await ch.send(msg + group + '\n\n');
       msg = '';
     }
-  } else if (isVideo) urls.forEach(u => msg += `[Video/Gif](${u})\n\n`);
-  else {
+  } else if (isVideo) {
+    urls.forEach(u => msg += `[Video/Gif](${u})\n\n`);
+    await ch.send(msg);
+  } else {
     if (urls.length > 1) msg += `**Images:** ${urls.length}\n\n`;
     for (let i = 0; i < urls.length; i += 5) {
       let group = urls.slice(i, i+5);
+      let groupMsg = '';
       group.forEach(u => {
         let low = u.toLowerCase();
         let type = low.endsWith('.gif') ? 'Gif' : (low.match(/\.(jpg|jpeg|png|webp)$/) ? 'Pic' : 'Media');
-        msg += `[${type}](${u})\n\n`;
+        groupMsg += `[${type}](${u})\n\n`;
       });
-      if (group.length) { await ch.send(msg); msg = ''; }
+      if (group.length) { 
+        await ch.send(msg + groupMsg); 
+        msg = ''; 
+      }
     }
+    if (msg.trim()) await ch.send(msg);
   }
-  if (msg.trim()) await ch.send(msg);
   await ch.send('═════════════════════════════════');
 };
 
-// Reddit extractor with cache & 429 retry
-const extractReddit = async (url, retry=0) => {
-  if (redditCache.has(url) && Date.now()-redditCache.get(url).ts < CACHE_TTL) return redditCache.get(url).data;
+// Reddit extractor with cache, rotating UA, and exponential backoff
+const extractReddit = async (url, retryCount = 0) => {
+  if (redditCache.has(url) && Date.now() - redditCache.get(url).ts < CACHE_TTL) 
+    return redditCache.get(url).data;
+
   try {
-    console.log(`🎬 Extracting Reddit: ${url}`);
+    console.log(`🎬 Extracting Reddit: ${url} (attempt ${retryCount + 1})`);
+    
+    // Add jitter to the base delay
+    const baseDelay = 1500 + Math.random() * 1000;
+    await sleep(baseDelay);
+
     let jsonUrl = url.replace('www.reddit.com', 'api.reddit.com').replace(/\/$/, '') + '.json';
-    await sleep(1500);
-    let res = await fetch(jsonUrl, { headers: { 'User-Agent': 'discord:LinkCleanerBot:v1.0 (by /u/_blazzard_)' } });
+    const userAgent = getRandomUserAgent();
+    let res = await fetch(jsonUrl, { 
+      headers: { 'User-Agent': userAgent } 
+    });
+
     if (res.status === 429) {
-      let wait = (res.headers.get('Retry-After')||5)*1000;
-      console.log(`⏳ Rate limited, waiting ${wait}ms`);
-      if (retry === 0) { await sleep(wait); return extractReddit(url, 1); }
-      return null;
+      const retryAfter = (res.headers.get('Retry-After') || 5) * 1000;
+      // Exponential backoff with jitter: wait = retryAfter * (2^retryCount) + random
+      const waitTime = retryAfter * Math.pow(2, retryCount) + Math.random() * 2000;
+      console.log(`⏳ Rate limited (429), waiting ${Math.round(waitTime)}ms before retry ${retryCount + 1}`);
+      
+      if (retryCount < 3) { // max 3 retries
+        await sleep(waitTime);
+        return extractReddit(url, retryCount + 1);
+      } else {
+        console.log(`❌ Max retries exceeded for ${url}`);
+        return null;
+      }
     }
+
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     let data = await res.json();
     let post = deepFind(data, p => p.title && p.subreddit);
@@ -87,10 +138,15 @@ const extractReddit = async (url, retry=0) => {
     let urls = [], hasVideo = false;
     // video fallback
     let vid = post.preview?.reddit_video_preview?.fallback_url || deepFind(post, o => o.fallback_url);
-    if (vid) { urls.push(cleanUrl(vid)); hasVideo = true; }
-    else {
+    if (vid) { 
+      urls.push(cleanUrl(vid)); 
+      hasVideo = true; 
+    } else {
       let rg = post.url?.toLowerCase().includes('redgifs.com') ? post.url : (post.url_overridden_by_dest?.toLowerCase().includes('redgifs.com') ? post.url_overridden_by_dest : null);
-      if (rg) { urls = [cleanUrl(rg)]; hasVideo = true; }
+      if (rg) { 
+        urls = [cleanUrl(rg)]; 
+        hasVideo = true; 
+      }
     }
     // gallery
     if (!hasVideo && post.media_metadata) {
@@ -112,18 +168,40 @@ const extractReddit = async (url, retry=0) => {
     let result = { urls, title: post.title, subreddit: post.subreddit, author: post.author, hasGallery: !!post.media_metadata, hasVideo };
     redditCache.set(url, { ts: Date.now(), data: result });
     return result;
-  } catch (e) { console.error(`❌ Reddit error:`, e.message); return null; }
+  } catch (e) { 
+    console.error(`❌ Reddit error:`, e.message); 
+    return null; 
+  }
 };
 
-// URL resolver
-const resolveUrl = async short => {
+// URL resolver (for redd.it) with rotating UA and simple retry
+const resolveUrl = async (short, retryCount = 0) => {
   try {
-    console.log(`🔍 Resolving: ${short}`);
-    await sleep(1200);
-    let res = await fetch(short, { headers: { 'User-Agent': 'discord:LinkCleanerBot:v1.0 (by /u/_blazzard_)' }, redirect: 'follow' });
+    console.log(`🔍 Resolving: ${short} (attempt ${retryCount + 1})`);
+    await sleep(1200 + Math.random() * 800); // base + jitter
+
+    const userAgent = getRandomUserAgent();
+    let res = await fetch(short, { 
+      headers: { 'User-Agent': userAgent },
+      redirect: 'follow' 
+    });
+
+    if (res.status === 429) {
+      const waitTime = (parseInt(res.headers.get('Retry-After')) || 5) * 1000 * Math.pow(2, retryCount) + Math.random() * 1000;
+      console.log(`⏳ Rate limited (429) on resolve, waiting ${Math.round(waitTime)}ms`);
+      if (retryCount < 2) {
+        await sleep(waitTime);
+        return resolveUrl(short, retryCount + 1);
+      }
+      return null;
+    }
+
     console.log(`✅ Resolved: ${short} -> ${res.url}`);
     return res.url;
-  } catch { return null; }
+  } catch (e) { 
+    console.error(`❌ Resolve error: ${e.message}`);
+    return null; 
+  }
 };
 
 // Extract basic post info from message (fallback)
@@ -136,10 +214,15 @@ const fallbackInfo = content => {
 
 // Log helper
 const sendLog = async (channelId, msg) => {
-  try { (await client.channels.fetch(channelId))?.send(msg); } catch {}
+  try { 
+    const channel = await client.channels.fetch(channelId);
+    if (channel) await channel.send(msg); 
+  } catch (e) {
+    console.error('Log channel error:', e.message);
+  }
 };
 
-client.once('clientReady', () => {
+client.once('ready', () => {
   console.log(`✅ Bot online as ${client.user.tag}`);
   client.user.setPresence({ activities: [{ name: 'Cleaning links...', type: ActivityType.Watching }], status: 'online' });
 });
@@ -182,7 +265,14 @@ client.on('messageCreate', async msg => {
   }
 
   let allAllowed = [...allowed];
-  if (extracted) extracted.urls.forEach(e => { if (!seen.has(e)) { allAllowed.push(e); seen.add(e); } });
+  if (extracted) {
+    extracted.urls.forEach(e => { 
+      if (!seen.has(e)) { 
+        allAllowed.push(e); 
+        seen.add(e); 
+      } 
+    });
+  }
 
   await sendLog(LOG_CHANNEL_ID,
     `🔎 **Analysis:**\n• From: **${msg.author.tag}**\n• Title: ${extracted?.title || fallback.title}\n• Subreddit: r/${extracted?.subreddit || fallback.subreddit}\n• URLs: ${urls.length} total, ${allAllowed.length} allowed, ${blocked.length} blocked` +
