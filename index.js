@@ -233,6 +233,14 @@ const resolveUrl = async (short, retryCount = 0) => {
   }
 };
 
+// --- NEW: Helper to detect Reddit post links (excludes media domains) ---
+function isRedditPostUrl(url) {
+  // redd.it shortlinks are always post links
+  if (url.includes('redd.it/')) return true;
+  // Reddit post links: /r/.../comments/...
+  return /reddit\.com\/r\/\w+\/comments\/\w+/i.test(url);
+}
+
 // Extract basic post info from message (fallback)
 const fallbackInfo = content => {
   let t = content.match(/\*\*(.*?)\*\*/)?.[1]?.trim() || 'Reddit Post';
@@ -276,26 +284,38 @@ client.on('messageCreate', async msg => {
 
   let allowed = [], blocked = [], seen = new Set(), extracted = null;
 
-  // First pass: resolve redd.it and extract
+  // --- NEW: First pass – detect and extract from any Reddit post link ---
   for (let u of urls) {
-    if (u.includes('redd.it/')) {
-      console.log(`[${timestamp()}] 🔗 Processing redd.it URL: ${u}`);
-      let resolved = await resolveUrl(u);
-      if (resolved && !resolved.includes('i.redd.it') && !resolved.includes('v.redd.it')) {
-        console.log(`[${timestamp()}] ↳ Resolved to Reddit thread, attempting extraction...`);
-        extracted = await extractReddit(resolved);
-      } else if (resolved) {
-        console.log(`[${timestamp()}] ↳ Resolved to direct media (${resolved}), skipping extraction`);
+    if (isRedditPostUrl(u)) {
+      let resolvedUrl = u;
+      // If it's a redd.it shortlink, resolve it first
+      if (u.includes('redd.it/')) {
+        resolvedUrl = await resolveUrl(u);
+        if (!resolvedUrl) continue; // resolution failed, skip
       }
-      if (extracted) break;
+      // If resolved to a native media domain, we don't need extraction; it will be added as allowed later.
+      if (resolvedUrl.includes('i.redd.it') || resolvedUrl.includes('v.redd.it')) {
+        console.log(`[${timestamp()}] ↳ Resolved to native media (${resolvedUrl}), skipping extraction`);
+        continue;
+      }
+      // Attempt extraction from the (resolved) URL
+      console.log(`[${timestamp()}] 🔍 Attempting Reddit extraction from: ${resolvedUrl}`);
+      extracted = await extractReddit(resolvedUrl);
+      if (extracted) {
+        console.log(`[${timestamp()}] ✅ Extraction successful, using extracted data`);
+        break; // use the first successful extraction
+      } else {
+        console.log(`[${timestamp()}] ⚠️ Extraction failed for ${resolvedUrl}, trying next Reddit link if any`);
+      }
     }
   }
 
   // Second pass: classify URLs
   console.log(`[${timestamp()}] 🔍 Classifying URLs...`);
   for (let u of urls) {
-    if (extracted && (u.includes('redd.it/') || u.includes('reddit.com/'))) {
-      console.log(`[${timestamp()}]   ⏭️ Skipping Reddit thread URL (already extracted): ${u}`);
+    // If we extracted data, skip the original Reddit post URL (it's not a media URL)
+    if (extracted && isRedditPostUrl(u)) {
+      console.log(`[${timestamp()}]   ⏭️ Skipping Reddit post URL (already extracted): ${u}`);
       continue;
     }
     let clean = cleanUrl(u);
