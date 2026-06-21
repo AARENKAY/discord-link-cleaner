@@ -14,8 +14,41 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 const TARGET_BOT_IDS = ['1470088304736338075', '1470135134362665072', '1470133059046215796', '1470057771020849266', '1471149320257536232', '1471842365198303283', '1517523318557904986', '1472941497123995690', '1518233162378117160'];
 const ALLOWED_EXTS = ['.mp4','.gif','.gifv','.webm','.jpg','.jpeg','.png','.webp'];
 const LOG_CHANNEL_ID = '1474800528281042985';
-const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it']; // Prioritize these
+const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it'];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ---------- LOGGER that sends to both console AND Discord log channel ----------
+const logAndSend = async (message, level = 'log') => {
+  const ts = new Date().toISOString();
+  console.log(`[${ts}] ${message}`);  // keep original console output
+
+  try {
+    const channel = await client.channels.fetch(LOG_CHANNEL_ID);
+    if (!channel) return;
+    let msg = `\`[${ts}]\` ${message}`;
+    if (msg.length > 1900) msg = msg.slice(0, 1900) + '... (truncated)';
+    await channel.send(msg);
+  } catch (e) {
+    // don't crash if logging fails
+  }
+};
+
+// Override console.log
+const originalLog = console.log;
+console.log = (...args) => {
+  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  logAndSend(msg);
+  originalLog(...args);
+};
+
+// Override console.error
+const originalError = console.error;
+console.error = (...args) => {
+  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  logAndSend(`❌ ${msg}`, 'error');
+  originalError(...args);
+};
+// ---------- End Logger ----------
 
 // Cache
 const redditCache = new Map();
@@ -36,7 +69,6 @@ function getRandomUserAgent() {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 }
 
-// Helper to get timestamp
 function timestamp() {
   return new Date().toISOString();
 }
@@ -104,23 +136,23 @@ const formatMessage = async (ch, title, sub, author, urls, isGallery, isVideo) =
   await ch.send('═════════════════════════════════');
 };
 
-// Reddit extractor with cache, rotating UA, and exponential backoff
+// --- Reddit extractor (original, no OAuth, but with full URL now) ---
 const extractReddit = async (url, retryCount = 0) => {
   if (redditCache.has(url) && Date.now() - redditCache.get(url).ts < CACHE_TTL) {
-    console.log(`[${timestamp()}] 📦 Using cached Reddit data for ${url}`);
+    console.log(`📦 Using cached Reddit data for ${url}`);
     return redditCache.get(url).data;
   }
 
   try {
-    console.log(`[${timestamp()}] 🎬 Extracting Reddit: ${url} (attempt ${retryCount + 1})`);
+    console.log(`🎬 Extracting Reddit: ${url} (attempt ${retryCount + 1})`);
     
-    // Add jitter to the base delay
-    const baseDelay = 1500 + Math.random() * 1000;
-    await sleep(baseDelay);
+    // Jitter + base delay
+    await sleep(1500 + Math.random() * 1000);
 
+    // Build the .json endpoint
     let jsonUrl = url.replace('www.reddit.com', 'api.reddit.com').replace(/\/$/, '') + '.json';
     const userAgent = getRandomUserAgent();
-    console.log(`[${timestamp()}]   ↳ Fetching ${jsonUrl} with UA: ${userAgent.substring(0, 50)}...`);
+    console.log(`   ↳ Fetching ${jsonUrl} with UA: ${userAgent.substring(0, 50)}...`);
     let res = await fetch(jsonUrl, { 
       headers: { 'User-Agent': userAgent } 
     });
@@ -128,13 +160,12 @@ const extractReddit = async (url, retryCount = 0) => {
     if (res.status === 429) {
       const retryAfter = (res.headers.get('Retry-After') || 5) * 1000;
       const waitTime = retryAfter * Math.pow(2, retryCount) + Math.random() * 2000;
-      console.log(`[${timestamp()}] ⏳ Rate limited (429), waiting ${Math.round(waitTime)}ms before retry ${retryCount + 1}`);
-      
+      console.log(`⏳ Rate limited (429), waiting ${Math.round(waitTime)}ms before retry ${retryCount + 1}`);
       if (retryCount < 3) {
         await sleep(waitTime);
         return extractReddit(url, retryCount + 1);
       } else {
-        console.log(`[${timestamp()}] ❌ Max retries exceeded for ${url}`);
+        console.log(`❌ Max retries exceeded for ${url}`);
         return null;
       }
     }
@@ -143,11 +174,11 @@ const extractReddit = async (url, retryCount = 0) => {
     let data = await res.json();
     let post = deepFind(data, p => p.title && p.subreddit);
     if (!post) {
-      console.log(`[${timestamp()}] ❌ No post data found in Reddit response`);
+      console.log(`❌ No post data found in Reddit response`);
       return null;
     }
 
-    console.log(`[${timestamp()}]   ✅ Found post: "${post.title}" in r/${post.subreddit} by ${post.author}`);
+    console.log(`   ✅ Found post: "${post.title}" in r/${post.subreddit} by ${post.author}`);
 
     let urls = [], hasVideo = false;
     // video fallback
@@ -155,25 +186,25 @@ const extractReddit = async (url, retryCount = 0) => {
     if (vid) { 
       urls.push(cleanUrl(vid)); 
       hasVideo = true; 
-      console.log(`[${timestamp()}]   🎥 Found video: ${vid}`);
+      console.log(`   🎥 Found video: ${vid}`);
     } else {
       let rg = post.url?.toLowerCase().includes('redgifs.com') ? post.url : (post.url_overridden_by_dest?.toLowerCase().includes('redgifs.com') ? post.url_overridden_by_dest : null);
       if (rg) { 
         urls = [cleanUrl(rg)]; 
         hasVideo = true; 
-        console.log(`[${timestamp()}]   🎬 Found Redgifs: ${rg}`);
+        console.log(`   🎬 Found Redgifs: ${rg}`);
       }
     }
     // gallery
     if (!hasVideo && post.media_metadata) {
-      console.log(`[${timestamp()}]   🖼️ Gallery detected, extracting images...`);
+      console.log(`   🖼️ Gallery detected, extracting images...`);
       for (let [id, m] of Object.entries(post.media_metadata)) {
         if (m.status !== 'valid') continue;
         let img = m.s?.gif || m.s?.mp4 || m.s?.u || (m.p?.length && m.p.at(-1).u);
         if (img) {
           let cleaned = cleanUrl(img);
           urls.push(cleaned);
-          console.log(`[${timestamp()}]     - Added gallery image: ${cleaned}`);
+          console.log(`     - Added gallery image: ${cleaned}`);
         }
       }
     }
@@ -183,66 +214,60 @@ const extractReddit = async (url, retryCount = 0) => {
       let d = direct.toLowerCase();
       if (d.match(/\.(jpg|jpeg|png|gif|mp4|webm)|i\.redd\.it|v\.redd\.it|redgifs\.com/)) {
         urls.push(cleanUrl(direct));
-        console.log(`[${timestamp()}]   📎 Found direct media: ${direct}`);
+        console.log(`   📎 Found direct media: ${direct}`);
       }
     }
 
     if (!urls.length) {
-      console.log(`[${timestamp()}] ❌ No media URLs found in post`);
+      console.log(`❌ No media URLs found in post`);
       return null;
     }
 
     let result = { urls, title: post.title, subreddit: post.subreddit, author: post.author, hasGallery: !!post.media_metadata, hasVideo };
     redditCache.set(url, { ts: Date.now(), data: result });
-    console.log(`[${timestamp()}]   ✅ Extracted ${urls.length} media URLs`);
+    console.log(`   ✅ Extracted ${urls.length} media URLs`);
     return result;
   } catch (e) { 
-    console.error(`[${timestamp()}] ❌ Reddit error:`, e.message); 
+    console.error(`❌ Reddit error: ${e.message}`); 
     return null; 
   }
 };
 
-// URL resolver (for redd.it) with rotating UA and simple retry
+// URL resolver (for shortlinks – fallback if we can't build full URL)
 const resolveUrl = async (short, retryCount = 0) => {
   try {
-    console.log(`[${timestamp()}] 🔍 Resolving: ${short} (attempt ${retryCount + 1})`);
-    await sleep(1200 + Math.random() * 800); // base + jitter
-
+    console.log(`🔍 Resolving: ${short} (attempt ${retryCount + 1})`);
+    await sleep(1200 + Math.random() * 800);
     const userAgent = getRandomUserAgent();
-    console.log(`[${timestamp()}]   ↳ Fetching with UA: ${userAgent.substring(0, 50)}...`);
     let res = await fetch(short, { 
       headers: { 'User-Agent': userAgent },
       redirect: 'follow' 
     });
-
     if (res.status === 429) {
       const waitTime = (parseInt(res.headers.get('Retry-After')) || 5) * 1000 * Math.pow(2, retryCount) + Math.random() * 1000;
-      console.log(`[${timestamp()}] ⏳ Rate limited (429) on resolve, waiting ${Math.round(waitTime)}ms`);
+      console.log(`⏳ Rate limited (429) on resolve, waiting ${Math.round(waitTime)}ms`);
       if (retryCount < 2) {
         await sleep(waitTime);
         return resolveUrl(short, retryCount + 1);
       }
-      console.log(`[${timestamp()}] ❌ Max retries exceeded for resolve`);
+      console.log(`❌ Max retries exceeded for resolve`);
       return null;
     }
-
-    console.log(`[${timestamp()}] ✅ Resolved: ${short} -> ${res.url}`);
+    console.log(`✅ Resolved: ${short} -> ${res.url}`);
     return res.url;
   } catch (e) { 
-    console.error(`[${timestamp()}] ❌ Resolve error: ${e.message}`);
+    console.error(`❌ Resolve error: ${e.message}`);
     return null; 
   }
 };
 
-// --- NEW: Helper to detect Reddit post links (excludes media domains) ---
+// --- Helper: detect Reddit post links (excludes media domains) ---
 function isRedditPostUrl(url) {
-  // redd.it shortlinks are always post links
   if (url.includes('redd.it/')) return true;
-  // Reddit post links: /r/.../comments/...
   return /reddit\.com\/r\/\w+\/comments\/\w+/i.test(url);
 }
 
-// Extract basic post info from message (fallback)
+// Fallback info from message content
 const fallbackInfo = content => {
   let t = content.match(/\*\*(.*?)\*\*/)?.[1]?.trim() || 'Reddit Post';
   let s = content.match(/r\/([\w]+)/i)?.[1] || 'unknown';
@@ -250,7 +275,7 @@ const fallbackInfo = content => {
   return { title: t, subreddit: s, author: a };
 };
 
-// Log helper
+// Log helper (kept for sending analysis)
 const sendLog = async (channelId, msg) => {
   try { 
     const channel = await client.channels.fetch(channelId);
@@ -261,67 +286,73 @@ const sendLog = async (channelId, msg) => {
 };
 
 client.once('clientReady', () => {
-  console.log(`[${timestamp()}] ✅ Bot online as ${client.user.tag}`);
+  console.log(`✅ Bot online as ${client.user.tag}`);
   client.user.setPresence({ activities: [{ name: 'Cleaning links...', type: ActivityType.Watching }], status: 'online' });
 });
 
 client.on('messageCreate', async msg => {
   if (msg.author.id === client.user.id || !TARGET_BOT_IDS.includes(msg.author.id)) return;
   
-  console.log(`\n[${timestamp()}] 📩 New message from ${msg.author.tag} in #${msg.channel.name}`);
-  console.log(`[${timestamp()}] 📝 Full content:\n${msg.content}`);
+  console.log(`\n📩 New message from ${msg.author.tag} in #${msg.channel.name}`);
+  console.log(`📝 Full content:\n${msg.content}`);
 
   await sendLog(LOG_CHANNEL_ID, `🔍 Processing message from **${msg.author.tag}** in <#${msg.channel.id}>\n📝 **Content:**\n${msg.content.slice(0,500)}${msg.content.length>500?'...':''}`);
 
   let urls = msg.content.match(/https?:\/\/[^\s<>"]+/gi);
   if (!urls) {
-    console.log(`[${timestamp()}] ℹ️ No URLs found in message`);
+    console.log(`ℹ️ No URLs found in message`);
     return;
   }
-  console.log(`[${timestamp()}] 🔗 Found ${urls.length} raw URLs:`, urls);
+  console.log(`🔗 Found ${urls.length} raw URLs:`, urls);
 
   let fallback = fallbackInfo(msg.content);
-  console.log(`[${timestamp()}] ℹ️ Fallback info - Title: "${fallback.title}", Sub: ${fallback.subreddit}, Author: ${fallback.author}`);
+  console.log(`ℹ️ Fallback info - Title: "${fallback.title}", Sub: ${fallback.subreddit}, Author: ${fallback.author}`);
 
   let allowed = [], blocked = [], seen = new Set(), extracted = null;
 
-  // --- NEW: First pass – detect and extract from any Reddit post link ---
+  // --- First pass: detect and extract from any Reddit post link ---
   for (let u of urls) {
     if (isRedditPostUrl(u)) {
       let resolvedUrl = u;
-      // If it's a redd.it shortlink, resolve it first
+      // If it's a redd.it shortlink, try to build the full URL using fallback subreddit
       if (u.includes('redd.it/')) {
-        resolvedUrl = await resolveUrl(u);
-        if (!resolvedUrl) continue; // resolution failed, skip
+        const id = u.match(/redd\.it\/(\w+)/)?.[1];
+        if (id && fallback.subreddit && fallback.subreddit !== 'unknown') {
+          resolvedUrl = `https://www.reddit.com/r/${fallback.subreddit}/comments/${id}/`;
+          console.log(`↳ Built full URL from shortlink: ${resolvedUrl}`);
+        } else {
+          // Fallback: resolve the shortlink (may give incomplete URL)
+          console.log(`↳ No subreddit in fallback, resolving shortlink instead...`);
+          const resolved = await resolveUrl(u);
+          if (resolved) resolvedUrl = resolved;
+          else continue;
+        }
+      } else {
+        // Already a full URL like /r/.../comments/...
+        if (!resolvedUrl.endsWith('/')) resolvedUrl += '/';
       }
-      // If resolved to a native media domain, we don't need extraction; it will be added as allowed later.
-      if (resolvedUrl.includes('i.redd.it') || resolvedUrl.includes('v.redd.it')) {
-        console.log(`[${timestamp()}] ↳ Resolved to native media (${resolvedUrl}), skipping extraction`);
-        continue;
-      }
-      // Attempt extraction from the (resolved) URL
-      console.log(`[${timestamp()}] 🔍 Attempting Reddit extraction from: ${resolvedUrl}`);
+      // Attempt extraction
+      console.log(`🔍 Attempting Reddit extraction from: ${resolvedUrl}`);
       extracted = await extractReddit(resolvedUrl);
       if (extracted) {
-        console.log(`[${timestamp()}] ✅ Extraction successful, using extracted data`);
-        break; // use the first successful extraction
+        console.log(`✅ Extraction successful, using extracted data`);
+        break;
       } else {
-        console.log(`[${timestamp()}] ⚠️ Extraction failed for ${resolvedUrl}, trying next Reddit link if any`);
+        console.log(`⚠️ Extraction failed for ${resolvedUrl}, trying next Reddit link if any`);
       }
     }
   }
 
   // Second pass: classify URLs
-  console.log(`[${timestamp()}] 🔍 Classifying URLs...`);
+  console.log(`🔍 Classifying URLs...`);
   for (let u of urls) {
-    // If we extracted data, skip the original Reddit post URL (it's not a media URL)
     if (extracted && isRedditPostUrl(u)) {
-      console.log(`[${timestamp()}]   ⏭️ Skipping Reddit post URL (already extracted): ${u}`);
+      console.log(`   ⏭️ Skipping Reddit post URL (already extracted): ${u}`);
       continue;
     }
     let clean = cleanUrl(u);
     if (seen.has(clean)) {
-      console.log(`[${timestamp()}]   🔁 Duplicate (skipped): ${clean}`);
+      console.log(`   🔁 Duplicate (skipped): ${clean}`);
       continue;
     }
     seen.add(clean);
@@ -330,24 +361,24 @@ client.on('messageCreate', async msg => {
         low.includes('i.redd.it') || low.includes('v.redd.it') ||
         ALLOWED_EXTS.some(ext => low.includes(ext) || low.endsWith(ext))) {
       allowed.push(clean);
-      console.log(`[${timestamp()}]   ✅ Allowed: ${clean}`);
-      if (low.includes('redgifs.com')) console.log(`[${timestamp()}]     ↳ (Redgifs)`);
+      console.log(`   ✅ Allowed: ${clean}`);
+      if (low.includes('redgifs.com')) console.log(`     ↳ (Redgifs)`);
     } else {
       blocked.push(clean);
-      console.log(`[${timestamp()}]   ❌ Blocked: ${clean}`);
+      console.log(`   ❌ Blocked: ${clean}`);
     }
   }
 
   let allAllowed = [...allowed];
   if (extracted) {
-    console.log(`[${timestamp()}] 📦 Adding extracted URLs from Reddit...`);
+    console.log(`📦 Adding extracted URLs from Reddit...`);
     extracted.urls.forEach(e => { 
       if (!seen.has(e)) { 
         allAllowed.push(e); 
         seen.add(e); 
-        console.log(`[${timestamp()}]   ✅ Added extracted: ${e}`);
+        console.log(`   ✅ Added extracted: ${e}`);
       } else {
-        console.log(`[${timestamp()}]   🔁 Extracted URL already present: ${e}`);
+        console.log(`   🔁 Extracted URL already present: ${e}`);
       }
     });
   }
@@ -357,15 +388,15 @@ client.on('messageCreate', async msg => {
     REDDIT_NATIVE_DOMAINS.some(domain => url.includes(domain))
   );
   if (hasRedditNative) {
-    console.log(`[${timestamp()}] 🎯 Reddit native media detected, filtering out external...`);
+    console.log(`🎯 Reddit native media detected, filtering out external...`);
     allAllowed = allAllowed.filter(url => 
       REDDIT_NATIVE_DOMAINS.some(domain => url.includes(domain))
     );
-    console.log(`[${timestamp()}]   ↳ Remaining native URLs:`, allAllowed);
+    console.log(`   ↳ Remaining native URLs:`, allAllowed);
   }
 
-  console.log(`[${timestamp()}] 📊 Final allowed URLs (${allAllowed.length}):`, allAllowed);
-  console.log(`[${timestamp()}] 🚫 Blocked URLs (${blocked.length}):`, blocked);
+  console.log(`📊 Final allowed URLs (${allAllowed.length}):`, allAllowed);
+  console.log(`🚫 Blocked URLs (${blocked.length}):`, blocked);
 
   await sendLog(LOG_CHANNEL_ID,
     `🔎 **Analysis:**\n• From: **${msg.author.tag}**\n• Title: ${extracted?.title || fallback.title}\n• Subreddit: r/${extracted?.subreddit || fallback.subreddit}\n• URLs: ${urls.length} total, ${allAllowed.length} allowed, ${blocked.length} blocked` +
@@ -373,17 +404,17 @@ client.on('messageCreate', async msg => {
   );
 
   if (allAllowed.length === 0 && blocked.length) {
-    console.log(`[${timestamp()}] 🗑️ No allowed URLs, deleting original message`);
+    console.log(`🗑️ No allowed URLs, deleting original message`);
     return msg.delete();
   }
 
   if (allAllowed.length) {
     try {
-      console.log(`[${timestamp()}] 🗑️ Deleting original message...`);
+      console.log(`🗑️ Deleting original message...`);
       await msg.delete();
-      console.log(`[${timestamp()}] ✅ Original message deleted`);
+      console.log(`✅ Original message deleted`);
 
-      console.log(`[${timestamp()}] 📤 Sending cleaned message...`);
+      console.log(`📤 Sending cleaned message...`);
       await formatMessage(msg.channel,
         extracted?.title || fallback.title,
         extracted?.subreddit || fallback.subreddit,
@@ -392,7 +423,7 @@ client.on('messageCreate', async msg => {
         extracted?.hasGallery || false,
         extracted?.hasVideo || false
       );
-      console.log(`[${timestamp()}] ✅ Cleaned message sent`);
+      console.log(`✅ Cleaned message sent`);
 
       await sleep(2000);
       await sendLog(LOG_CHANNEL_ID,
@@ -400,7 +431,7 @@ client.on('messageCreate', async msg => {
         (extracted ? `\n• Reddit content extracted: ${extracted.urls.length} items` : '')
       );
     } catch (e) {
-      console.error(`[${timestamp()}] ❌ Error: ${e.message}`);
+      console.error(`❌ Error: ${e.message}`);
       await sendLog(LOG_CHANNEL_ID, `❌ **Error:** ${e.message}\n• From: **${msg.author.tag}**`);
     }
   }
