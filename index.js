@@ -17,10 +17,13 @@ const LOG_CHANNEL_ID = '1474800528281042985';
 const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it'];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// ---------- LOGGER that sends to both console AND Discord log channel ----------
+// ---------- LOGGER (fixed recursion) ----------
+const originalLog = console.log;
+const originalError = console.error;
+
 const logAndSend = async (message, level = 'log') => {
   const ts = new Date().toISOString();
-  console.log(`[${ts}] ${message}`);  // keep original console output
+  originalLog(`[${ts}] ${message}`);
 
   try {
     const channel = await client.channels.fetch(LOG_CHANNEL_ID);
@@ -29,24 +32,18 @@ const logAndSend = async (message, level = 'log') => {
     if (msg.length > 1900) msg = msg.slice(0, 1900) + '... (truncated)';
     await channel.send(msg);
   } catch (e) {
-    // don't crash if logging fails
+    originalError('Failed to send log to Discord:', e.message);
   }
 };
 
-// Override console.log
-const originalLog = console.log;
 console.log = (...args) => {
   const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
   logAndSend(msg);
-  originalLog(...args);
 };
 
-// Override console.error
-const originalError = console.error;
 console.error = (...args) => {
   const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
   logAndSend(`❌ ${msg}`, 'error');
-  originalError(...args);
 };
 // ---------- End Logger ----------
 
@@ -136,7 +133,7 @@ const formatMessage = async (ch, title, sub, author, urls, isGallery, isVideo) =
   await ch.send('═════════════════════════════════');
 };
 
-// --- Reddit extractor (original, no OAuth, but with full URL now) ---
+// --- Reddit extractor (no OAuth) ---
 const extractReddit = async (url, retryCount = 0) => {
   if (redditCache.has(url) && Date.now() - redditCache.get(url).ts < CACHE_TTL) {
     console.log(`📦 Using cached Reddit data for ${url}`);
@@ -146,10 +143,8 @@ const extractReddit = async (url, retryCount = 0) => {
   try {
     console.log(`🎬 Extracting Reddit: ${url} (attempt ${retryCount + 1})`);
     
-    // Jitter + base delay
     await sleep(1500 + Math.random() * 1000);
 
-    // Build the .json endpoint
     let jsonUrl = url.replace('www.reddit.com', 'api.reddit.com').replace(/\/$/, '') + '.json';
     const userAgent = getRandomUserAgent();
     console.log(`   ↳ Fetching ${jsonUrl} with UA: ${userAgent.substring(0, 50)}...`);
@@ -181,7 +176,6 @@ const extractReddit = async (url, retryCount = 0) => {
     console.log(`   ✅ Found post: "${post.title}" in r/${post.subreddit} by ${post.author}`);
 
     let urls = [], hasVideo = false;
-    // video fallback
     let vid = post.preview?.reddit_video_preview?.fallback_url || deepFind(post, o => o.fallback_url);
     if (vid) { 
       urls.push(cleanUrl(vid)); 
@@ -195,7 +189,6 @@ const extractReddit = async (url, retryCount = 0) => {
         console.log(`   🎬 Found Redgifs: ${rg}`);
       }
     }
-    // gallery
     if (!hasVideo && post.media_metadata) {
       console.log(`   🖼️ Gallery detected, extracting images...`);
       for (let [id, m] of Object.entries(post.media_metadata)) {
@@ -208,7 +201,6 @@ const extractReddit = async (url, retryCount = 0) => {
         }
       }
     }
-    // direct media links
     let direct = post.url || post.url_overridden_by_dest;
     if (!urls.length && direct) {
       let d = direct.toLowerCase();
@@ -314,24 +306,20 @@ client.on('messageCreate', async msg => {
   for (let u of urls) {
     if (isRedditPostUrl(u)) {
       let resolvedUrl = u;
-      // If it's a redd.it shortlink, try to build the full URL using fallback subreddit
       if (u.includes('redd.it/')) {
         const id = u.match(/redd\.it\/(\w+)/)?.[1];
         if (id && fallback.subreddit && fallback.subreddit !== 'unknown') {
           resolvedUrl = `https://www.reddit.com/r/${fallback.subreddit}/comments/${id}/`;
           console.log(`↳ Built full URL from shortlink: ${resolvedUrl}`);
         } else {
-          // Fallback: resolve the shortlink (may give incomplete URL)
           console.log(`↳ No subreddit in fallback, resolving shortlink instead...`);
           const resolved = await resolveUrl(u);
           if (resolved) resolvedUrl = resolved;
           else continue;
         }
       } else {
-        // Already a full URL like /r/.../comments/...
         if (!resolvedUrl.endsWith('/')) resolvedUrl += '/';
       }
-      // Attempt extraction
       console.log(`🔍 Attempting Reddit extraction from: ${resolvedUrl}`);
       extracted = await extractReddit(resolvedUrl);
       if (extracted) {
