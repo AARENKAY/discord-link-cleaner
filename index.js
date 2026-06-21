@@ -1,5 +1,6 @@
 const express = require('express');
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
+const axios = require('axios'); // ✅ added
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -16,6 +17,9 @@ const ALLOWED_EXTS = ['.mp4','.gif','.gifv','.webm','.jpg','.jpeg','.png','.webp
 const LOG_CHANNEL_ID = '1474800528281042985';
 const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it'];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ---------- Android User-Agent (backup) ----------
+const ANDROID_UA = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36';
 
 // ---------- LOGGER (fixed recursion) ----------
 const originalLog = console.log;
@@ -50,15 +54,6 @@ console.error = (...args) => {
 // Cache
 const redditCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
-// --- User Agent Rotation ---
-const USER_AGENTS = [
-  'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36'
-];
-
-function getRandomUserAgent() {
-  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-}
 
 function timestamp() {
   return new Date().toISOString();
@@ -127,7 +122,7 @@ const formatMessage = async (ch, title, sub, author, urls, isGallery, isVideo) =
   await ch.send('═════════════════════════════════');
 };
 
-// --- Reddit extractor (no OAuth) ---
+// --- Reddit extractor (using axios with Android UA) ---
 const extractReddit = async (url, retryCount = 0) => {
   if (redditCache.has(url) && Date.now() - redditCache.get(url).ts < CACHE_TTL) {
     console.log(`📦 Using cached Reddit data for ${url}`);
@@ -140,14 +135,20 @@ const extractReddit = async (url, retryCount = 0) => {
     await sleep(1500 + Math.random() * 1000);
 
     let jsonUrl = url.replace('www.reddit.com', 'api.reddit.com').replace(/\/$/, '') + '.json';
-    const userAgent = getRandomUserAgent();
-    console.log(`   ↳ Fetching ${jsonUrl} with UA: ${userAgent.substring(0, 50)}...`);
-    let res = await fetch(jsonUrl, { 
-      headers: { 'User-Agent': userAgent } 
+    console.log(`   ↳ Fetching ${jsonUrl} with axios`);
+
+    const response = await axios.get(jsonUrl, {
+      headers: {
+        'User-Agent': ANDROID_UA
+      },
+      timeout: 10000,
+      validateStatus: false, // we'll handle status codes ourselves
+      maxRedirects: 5,
     });
 
-    if (res.status === 429) {
-      const retryAfter = (res.headers.get('Retry-After') || 5) * 1000;
+    const status = response.status;
+    if (status === 429) {
+      const retryAfter = (response.headers['retry-after'] || 5) * 1000;
       const waitTime = retryAfter * Math.pow(2, retryCount) + Math.random() * 2000;
       console.log(`⏳ Rate limited (429), waiting ${Math.round(waitTime)}ms before retry ${retryCount + 1}`);
       if (retryCount < 3) {
@@ -159,8 +160,8 @@ const extractReddit = async (url, retryCount = 0) => {
       }
     }
 
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    let data = await res.json();
+    if (status !== 200) throw new Error(`HTTP ${status}`);
+    const data = response.data;
     let post = deepFind(data, p => p.title && p.subreddit);
     if (!post) {
       console.log(`❌ No post data found in Reddit response`);
@@ -219,18 +220,21 @@ const extractReddit = async (url, retryCount = 0) => {
   }
 };
 
-// URL resolver (for shortlinks – fallback if we can't build full URL)
+// --- URL resolver for shortlinks (using axios with Android UA) ---
 const resolveUrl = async (short, retryCount = 0) => {
   try {
     console.log(`🔍 Resolving: ${short} (attempt ${retryCount + 1})`);
     await sleep(1200 + Math.random() * 800);
-    const userAgent = getRandomUserAgent();
-    let res = await fetch(short, { 
-      headers: { 'User-Agent': userAgent },
-      redirect: 'follow' 
+    const response = await axios.get(short, {
+      headers: {
+        'User-Agent': ANDROID_UA
+      },
+      maxRedirects: 5,
+      validateStatus: false,
+      timeout: 10000,
     });
-    if (res.status === 429) {
-      const waitTime = (parseInt(res.headers.get('Retry-After')) || 5) * 1000 * Math.pow(2, retryCount) + Math.random() * 1000;
+    if (response.status === 429) {
+      const waitTime = (parseInt(response.headers['retry-after']) || 5) * 1000 * Math.pow(2, retryCount) + Math.random() * 1000;
       console.log(`⏳ Rate limited (429) on resolve, waiting ${Math.round(waitTime)}ms`);
       if (retryCount < 2) {
         await sleep(waitTime);
@@ -239,8 +243,10 @@ const resolveUrl = async (short, retryCount = 0) => {
       console.log(`❌ Max retries exceeded for resolve`);
       return null;
     }
-    console.log(`✅ Resolved: ${short} -> ${res.url}`);
-    return res.url;
+    // axios follows redirects, the final URL is in response.request.res.responseUrl (Node)
+    const finalUrl = response.request?.res?.responseUrl || short;
+    console.log(`✅ Resolved: ${short} -> ${finalUrl}`);
+    return finalUrl;
   } catch (e) { 
     console.error(`❌ Resolve error: ${e.message}`);
     return null; 
