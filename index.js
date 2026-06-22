@@ -1,6 +1,5 @@
 const express = require('express');
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
-const axios = require('axios'); // ✅ added
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -18,7 +17,7 @@ const LOG_CHANNEL_ID = '1474800528281042985';
 const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it'];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// ---------- Android User-Agent (backup) ----------
+// ---------- Android User-Agent (fallback) ----------
 const ANDROID_UA = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36';
 
 // ---------- LOGGER (fixed recursion) ----------
@@ -91,7 +90,7 @@ const deepFind = (obj, test) => {
 
 // Format message
 const formatMessage = async (ch, title, sub, author, urls, isGallery, isVideo) => {
-  let msg = `# ${title}\n\n*Posted in* **r/${sub}** *by* **${author}**\n\n`;
+  let msg = `## ${title}\n\n*Posted in* **r/${sub}** *by* **${author}**\n\n`;
   if (isGallery && urls.length > 1) {
     msg += `**Gallery:** ${urls.length} images\n\n`;
     for (let i = 0; i < urls.length; i += 5) {
@@ -122,7 +121,79 @@ const formatMessage = async (ch, title, sub, author, urls, isGallery, isVideo) =
   await ch.send('═════════════════════════════════');
 };
 
-// --- Reddit extractor (using axios with Android UA) ---
+// ---------- fetch with fallback UA ----------
+async function fetchWithFallback(url, options = {}, retryCount = 0) {
+  // First attempt: no custom User-Agent
+  try {
+    console.log(`   ↳ Fetching ${url} (attempt ${retryCount + 1}, no UA)`);
+    const res = await fetch(url, {
+      ...options,
+      redirect: 'follow',
+    });
+    const status = res.status;
+    // If 429, handle rate limit with exponential backoff
+    if (status === 429) {
+      const retryAfter = (res.headers.get('Retry-After') || 5) * 1000;
+      const waitTime = retryAfter * Math.pow(2, retryCount) + Math.random() * 2000;
+      console.log(`⏳ Rate limited (429), waiting ${Math.round(waitTime)}ms before retry ${retryCount + 1}`);
+      if (retryCount < 3) {
+        await sleep(waitTime);
+        // retry with same UA (no UA) but increase retryCount
+        return fetchWithFallback(url, options, retryCount + 1);
+      } else {
+        throw new Error('Max retries exceeded for 429');
+      }
+    }
+    // If 403 or other error, retry with Android UA once
+    if (status === 403 || status >= 500) {
+      console.log(`   ↳ Received ${status}, retrying with Android UA...`);
+      // Retry with Android UA
+      const uaOptions = {
+        ...options,
+        headers: {
+          ...(options.headers || {}),
+          'User-Agent': ANDROID_UA,
+        },
+      };
+      const res2 = await fetch(url, {
+        ...uaOptions,
+        redirect: 'follow',
+      });
+      if (!res2.ok) {
+        // If still fails, throw error with status
+        throw new Error(`HTTP ${res2.status} after UA fallback`);
+      }
+      return res2;
+    }
+    if (!res.ok) {
+      throw new Error(`HTTP ${status}`);
+    }
+    return res;
+  } catch (e) {
+    // If network error or other, maybe retry once with UA
+    if (retryCount === 0) {
+      console.log(`   ↳ Network error: ${e.message}, retrying with Android UA...`);
+      const uaOptions = {
+        ...options,
+        headers: {
+          ...(options.headers || {}),
+          'User-Agent': ANDROID_UA,
+        },
+      };
+      const res2 = await fetch(url, {
+        ...uaOptions,
+        redirect: 'follow',
+      });
+      if (!res2.ok) {
+        throw new Error(`HTTP ${res2.status} after UA fallback`);
+      }
+      return res2;
+    }
+    throw e;
+  }
+}
+
+// --- Reddit extractor (using fetchWithFallback) ---
 const extractReddit = async (url, retryCount = 0) => {
   if (redditCache.has(url) && Date.now() - redditCache.get(url).ts < CACHE_TTL) {
     console.log(`📦 Using cached Reddit data for ${url}`);
@@ -135,33 +206,12 @@ const extractReddit = async (url, retryCount = 0) => {
     await sleep(1500 + Math.random() * 1000);
 
     let jsonUrl = url.replace('www.reddit.com', 'api.reddit.com').replace(/\/$/, '') + '.json';
-    console.log(`   ↳ Fetching ${jsonUrl} with axios`);
+    console.log(`   ↳ Fetching ${jsonUrl}`);
 
-    const response = await axios.get(jsonUrl, {
-      headers: {
-        'User-Agent': ANDROID_UA
-      },
-      timeout: 10000,
-      validateStatus: false, // we'll handle status codes ourselves
-      maxRedirects: 5,
-    });
+    // Use fetchWithFallback – it will try no UA first, then fallback to Android UA if needed
+    const response = await fetchWithFallback(jsonUrl, {}, retryCount);
+    const data = await response.json();
 
-    const status = response.status;
-    if (status === 429) {
-      const retryAfter = (response.headers['retry-after'] || 5) * 1000;
-      const waitTime = retryAfter * Math.pow(2, retryCount) + Math.random() * 2000;
-      console.log(`⏳ Rate limited (429), waiting ${Math.round(waitTime)}ms before retry ${retryCount + 1}`);
-      if (retryCount < 3) {
-        await sleep(waitTime);
-        return extractReddit(url, retryCount + 1);
-      } else {
-        console.log(`❌ Max retries exceeded for ${url}`);
-        return null;
-      }
-    }
-
-    if (status !== 200) throw new Error(`HTTP ${status}`);
-    const data = response.data;
     let post = deepFind(data, p => p.title && p.subreddit);
     if (!post) {
       console.log(`❌ No post data found in Reddit response`);
@@ -220,31 +270,14 @@ const extractReddit = async (url, retryCount = 0) => {
   }
 };
 
-// --- URL resolver for shortlinks (using axios with Android UA) ---
+// --- URL resolver for shortlinks (using fetchWithFallback) ---
 const resolveUrl = async (short, retryCount = 0) => {
   try {
     console.log(`🔍 Resolving: ${short} (attempt ${retryCount + 1})`);
     await sleep(1200 + Math.random() * 800);
-    const response = await axios.get(short, {
-      headers: {
-        'User-Agent': ANDROID_UA
-      },
-      maxRedirects: 5,
-      validateStatus: false,
-      timeout: 10000,
-    });
-    if (response.status === 429) {
-      const waitTime = (parseInt(response.headers['retry-after']) || 5) * 1000 * Math.pow(2, retryCount) + Math.random() * 1000;
-      console.log(`⏳ Rate limited (429) on resolve, waiting ${Math.round(waitTime)}ms`);
-      if (retryCount < 2) {
-        await sleep(waitTime);
-        return resolveUrl(short, retryCount + 1);
-      }
-      console.log(`❌ Max retries exceeded for resolve`);
-      return null;
-    }
-    // axios follows redirects, the final URL is in response.request.res.responseUrl (Node)
-    const finalUrl = response.request?.res?.responseUrl || short;
+    const response = await fetchWithFallback(short, {}, retryCount);
+    // fetch follows redirects, final URL is in response.url
+    const finalUrl = response.url || short;
     console.log(`✅ Resolved: ${short} -> ${finalUrl}`);
     return finalUrl;
   } catch (e) { 
