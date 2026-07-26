@@ -13,7 +13,7 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 // Config
 const TARGET_BOT_IDS = ['1470088304736338075', '1470135134362665072', '1470133059046215796', '1470057771020849266', '1471149320257536232', '1471842365198303283', '1517523318557904986', '1472941497123995690', '1518233162378117160'];
 const ALLOWED_EXTS = ['.mp4','.gif','.gifv','.webm','.jpg','.jpeg','.png','.webp'];
-const LOG_CHANNEL_ID = '1474800528281042985';
+const LOG_CHANNEL_ID = '1530804280720887918';
 const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it'];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
