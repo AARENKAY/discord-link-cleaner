@@ -13,14 +13,15 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 // Config
 const TARGET_BOT_IDS = ['1470088304736338075', '1470135134362665072', '1470133059046215796', '1470057771020849266', '1471149320257536232', '1471842365198303283', '1517523318557904986', '1472941497123995690', '1518233162378117160'];
 const ALLOWED_EXTS = ['.mp4','.gif','.gifv','.webm','.jpg','.jpeg','.png','.webp'];
-const LOG_CHANNEL_ID = '1530804280720887918';
+const LOG_CHANNEL_ID = '1530804280720887918';   // <-- UPDATED
 const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it'];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// ---------- Android User-Agent (fallback) ----------
+// ---------- User-Agents ----------
 const ANDROID_UA = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36';
+const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
 
-// ---------- LOGGER (fixed recursion) ----------
+// ---------- LOGGER (sends to Discord) ----------
 const originalLog = console.log;
 const originalError = console.error;
 
@@ -121,71 +122,57 @@ const formatMessage = async (ch, title, sub, author, urls, isGallery, isVideo) =
   await ch.send('═════════════════════════════════');
 };
 
-// ---------- fetch with fallback UA ----------
+// ---------- fetch with ALWAYS a User-Agent ----------
 async function fetchWithFallback(url, options = {}, retryCount = 0) {
-  // First attempt: no custom User-Agent
+  const defaultHeaders = {
+    'User-Agent': DESKTOP_UA,
+  };
+  const headers = { ...defaultHeaders, ...(options.headers || {}) };
+
   try {
-    console.log(`   ↳ Fetching ${url} (attempt ${retryCount + 1}, no UA)`);
+    console.log(`   ↳ Fetching ${url} (attempt ${retryCount + 1})`);
     const res = await fetch(url, {
       ...options,
+      headers,
       redirect: 'follow',
     });
     const status = res.status;
-    // If 429, handle rate limit with exponential backoff
+
     if (status === 429) {
       const retryAfter = (res.headers.get('Retry-After') || 5) * 1000;
       const waitTime = retryAfter * Math.pow(2, retryCount) + Math.random() * 2000;
       console.log(`⏳ Rate limited (429), waiting ${Math.round(waitTime)}ms before retry ${retryCount + 1}`);
       if (retryCount < 3) {
         await sleep(waitTime);
-        // retry with same UA (no UA) but increase retryCount
         return fetchWithFallback(url, options, retryCount + 1);
       } else {
         throw new Error('Max retries exceeded for 429');
       }
     }
-    // If 403 or other error, retry with Android UA once
-    if (status === 403 || status >= 500) {
-      console.log(`   ↳ Received ${status}, retrying with Android UA...`);
-      // Retry with Android UA
-      const uaOptions = {
-        ...options,
-        headers: {
-          ...(options.headers || {}),
-          'User-Agent': ANDROID_UA,
-        },
-      };
-      const res2 = await fetch(url, {
-        ...uaOptions,
-        redirect: 'follow',
-      });
-      if (!res2.ok) {
-        // If still fails, throw error with status
-        throw new Error(`HTTP ${res2.status} after UA fallback`);
+
+    if (status >= 500) {
+      console.log(`   ↳ Server error ${status}, retrying...`);
+      if (retryCount < 3) {
+        const waitTime = 2000 * Math.pow(2, retryCount) + Math.random() * 1000;
+        await sleep(waitTime);
+        return fetchWithFallback(url, options, retryCount + 1);
+      } else {
+        throw new Error(`Server error ${status} after retries`);
       }
-      return res2;
     }
+
     if (!res.ok) {
       throw new Error(`HTTP ${status}`);
     }
+
     return res;
   } catch (e) {
-    // If network error or other, maybe retry once with UA
-    if (retryCount === 0) {
-      console.log(`   ↳ Network error: ${e.message}, retrying with Android UA...`);
-      const uaOptions = {
-        ...options,
-        headers: {
-          ...(options.headers || {}),
-          'User-Agent': ANDROID_UA,
-        },
-      };
-      const res2 = await fetch(url, {
-        ...uaOptions,
-        redirect: 'follow',
-      });
+    if (retryCount === 0 && !e.message.startsWith('HTTP')) {
+      console.log(`   ↳ Network error: ${e.message}, retrying with mobile UA...`);
+      const altHeaders = { ...headers, 'User-Agent': ANDROID_UA };
+      const res2 = await fetch(url, { ...options, headers: altHeaders, redirect: 'follow' });
       if (!res2.ok) {
-        throw new Error(`HTTP ${res2.status} after UA fallback`);
+        throw new Error(`HTTP ${res2.status} after fallback`);
       }
       return res2;
     }
@@ -193,7 +180,7 @@ async function fetchWithFallback(url, options = {}, retryCount = 0) {
   }
 }
 
-// --- Reddit extractor (using fetchWithFallback) ---
+// --- Reddit extractor (with detailed logging) ---
 const extractReddit = async (url, retryCount = 0) => {
   if (redditCache.has(url) && Date.now() - redditCache.get(url).ts < CACHE_TTL) {
     console.log(`📦 Using cached Reddit data for ${url}`);
@@ -201,14 +188,15 @@ const extractReddit = async (url, retryCount = 0) => {
   }
 
   try {
-    console.log(`🎬 Extracting Reddit: ${url} (attempt ${retryCount + 1})`);
+    console.log(`🎬 Extracting Reddit from: ${url} (attempt ${retryCount + 1})`);
     
     await sleep(1500 + Math.random() * 1000);
 
-    let jsonUrl = url.replace('www.reddit.com', 'api.reddit.com').replace(/\/$/, '') + '.json';
-    console.log(`   ↳ Fetching ${jsonUrl}`);
+    // Remove trailing slash and build .json URL
+    let cleanUrl = url.replace(/\/$/, '');
+    let jsonUrl = cleanUrl + '.json';
+    console.log(`   ↳ JSON URL to fetch: ${jsonUrl}`);
 
-    // Use fetchWithFallback – it will try no UA first, then fallback to Android UA if needed
     const response = await fetchWithFallback(jsonUrl, {}, retryCount);
     const data = await response.json();
 
@@ -270,18 +258,17 @@ const extractReddit = async (url, retryCount = 0) => {
   }
 };
 
-// --- URL resolver for shortlinks (using fetchWithFallback) ---
+// --- URL resolver for shortlinks (logs everything) ---
 const resolveUrl = async (short, retryCount = 0) => {
   try {
-    console.log(`🔍 Resolving: ${short} (attempt ${retryCount + 1})`);
+    console.log(`🔍 Resolving shortlink: ${short} (attempt ${retryCount + 1})`);
     await sleep(1200 + Math.random() * 800);
     const response = await fetchWithFallback(short, {}, retryCount);
-    // fetch follows redirects, final URL is in response.url
     const finalUrl = response.url || short;
     console.log(`✅ Resolved: ${short} -> ${finalUrl}`);
     return finalUrl;
   } catch (e) { 
-    console.error(`❌ Resolve error: ${e.message}`);
+    console.error(`❌ Resolve error for ${short}: ${e.message}`);
     return null; 
   }
 };
@@ -338,20 +325,22 @@ client.on('messageCreate', async msg => {
   // --- First pass: detect and extract from any Reddit post link ---
   for (let u of urls) {
     if (isRedditPostUrl(u)) {
+      console.log(`🔁 Processing Reddit link: ${u}`);
       let resolvedUrl = u;
       if (u.includes('redd.it/')) {
-        const id = u.match(/redd\.it\/(\w+)/)?.[1];
-        if (id && fallback.subreddit && fallback.subreddit !== 'unknown') {
-          resolvedUrl = `https://www.reddit.com/r/${fallback.subreddit}/comments/${id}/`;
-          console.log(`↳ Built full URL from shortlink: ${resolvedUrl}`);
+        console.log(`   ↳ Shortlink detected: ${u}`);
+        const resolved = await resolveUrl(u);
+        if (resolved) {
+          resolvedUrl = resolved;
+          console.log(`   ↳ Unfurled to: ${resolvedUrl}`);
         } else {
-          console.log(`↳ No subreddit in fallback, resolving shortlink instead...`);
-          const resolved = await resolveUrl(u);
-          if (resolved) resolvedUrl = resolved;
-          else continue;
+          console.log(`   ⚠️ Failed to resolve ${u}, skipping extraction`);
+          continue;
         }
       } else {
-        if (!resolvedUrl.endsWith('/')) resolvedUrl += '/';
+        // Already full URL – remove trailing slash if present
+        resolvedUrl = u.replace(/\/$/, '');
+        console.log(`   ↳ Full URL (no slash): ${resolvedUrl}`);
       }
       console.log(`🔍 Attempting Reddit extraction from: ${resolvedUrl}`);
       extracted = await extractReddit(resolvedUrl);
