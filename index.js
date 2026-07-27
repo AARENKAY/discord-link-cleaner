@@ -9,11 +9,12 @@ app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Health server on port ${PORT
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
-// Config
+// ---------- CONFIG ----------
 const TARGET_BOT_IDS = [
-  '1531274702067073157', '1470088304736338075', '1470135134362665072', '1470133059046215796',
+  '1470088304736338075', '1470135134362665072', '1470133059046215796',
   '1470057771020849266', '1471149320257536232', '1471842365198303283',
-  '1517523318557904986', '1472941497123995690', '1518233162378117160'
+  '1517523318557904986', '1472941497123995690', '1518233162378117160',
+  '1531274702067073157'   // <-- New bot ID added
 ];
 const ALLOWED_EXTS = ['.mp4','.gif','.gifv','.webm','.jpg','.jpeg','.png','.webp'];
 const LOG_CHANNEL_ID = '1530804280720887918';
@@ -272,12 +273,18 @@ function isRedditPostUrl(url) {
   return /redd\.it\/\w+/.test(url) || /reddit\.com\/r\/\w+\/comments\/\w+/.test(url) || /reddit\.com\/gallery\/\w+/.test(url);
 }
 
-// --- Fallback info from message content ---
+// --- Fixed fallbackInfo: extracts title, subreddit, author correctly ---
 const fallbackInfo = content => {
-  const t = content.match(/\*\*(.*?)\*\*/)?.[1]?.trim() || 'Reddit Post';
-  const s = content.match(/r\/([\w]+)/i)?.[1] || 'unknown';
-  const a = content.match(/\*by\s+([\w-]+)\*/i)?.[1] || 'unknown';
-  return { title: t, subreddit: s, author: a };
+  const subMatch = content.match(/r\/([\w]+)/i);
+  const sub = subMatch ? subMatch[1] : 'unknown';
+
+  const titleMatch = content.match(/:\s*\[([^\]]+)\]/);
+  const title = titleMatch ? titleMatch[1].trim() : 'Reddit Post';
+
+  const authorMatch = content.match(/\*by\s+([\w-]+)\*/i);
+  const author = authorMatch ? authorMatch[1] : 'unknown';
+
+  return { title, subreddit: sub, author };
 };
 
 const sendLog = async (channelId, msg) => {
@@ -314,7 +321,7 @@ client.on('messageCreate', async msg => {
 
   let allowed = [], blocked = [], seen = new Set(), extracted = null;
 
-  // --- First pass: detect Reddit post links and extract (no shortlink fetch) ---
+  // First pass: detect Reddit post links and extract (no shortlink fetch)
   for (const u of urls) {
     if (isRedditPostUrl(u)) {
       const postId = getRedditPostId(u);
@@ -332,7 +339,7 @@ client.on('messageCreate', async msg => {
     }
   }
 
-  // --- Second pass: classify remaining URLs ---
+  // Second pass: classify remaining URLs
   console.log(`🔍 Classifying URLs...`);
   for (const u of urls) {
     if (extracted && isRedditPostUrl(u)) {
@@ -372,7 +379,7 @@ client.on('messageCreate', async msg => {
     });
   }
 
-  // --- Prioritize Reddit native media ---
+  // Prioritize Reddit native media
   const hasRedditNative = allAllowed.some(url => REDDIT_NATIVE_DOMAINS.some(domain => url.includes(domain)));
   if (hasRedditNative) {
     console.log(`🎯 Reddit native media detected, filtering out external...`);
