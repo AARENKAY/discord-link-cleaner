@@ -3,6 +3,10 @@ const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.get('/health', (req, res) => res.json({ status: 'ok', bot: client.user?.tag || 'Starting...', uptime: process.uptime(), memory: process.memoryUsage(), ready: client.isReady(), timestamp: new Date().toISOString() }));
+app.get('/', (req, res) => res.send('Discord Link Cleaner Bot - Health: /health'));
+app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Health server on port ${PORT}`));
+
 // ---------- CONFIG ----------
 // 🧩 Subreddit → channel ID redirection
 const SUBREDDIT_CHANNEL_MAP = {
