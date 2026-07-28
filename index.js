@@ -173,7 +173,7 @@ const extractReddit = async (subreddit, postId, title, retryCount = 0) => {
     return null;
   }
   const slug = slugify(title || 'post');
-  const jsonUrl = `https://api.reddit.com/r/${subreddit}/comments/${postId}/${slug}.json`;
+  const jsonUrl = `https://old.reddit.com/r/${subreddit}/comments/${postId}/${slug}.json`;
   console.log(`🎬 Extracting Reddit: ${jsonUrl} (attempt ${retryCount + 1})`);
 
   const cacheKey = `${subreddit}_${postId}`;
