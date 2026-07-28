@@ -3,13 +3,13 @@ const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.get('/health', (req, res) => res.json({ status: 'ok', bot: client.user?.tag || 'Starting...', uptime: process.uptime(), memory: process.memoryUsage(), ready: client.isReady(), timestamp: new Date().toISOString() }));
-app.get('/', (req, res) => res.send('Discord Link Cleaner Bot - Health: /health'));
-app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Health server on port ${PORT}`));
-
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
-
 // ---------- CONFIG ----------
+// 🧩 Subreddit → channel ID redirection
+const SUBREDDIT_CHANNEL_MAP = {
+  'realscatgirls': '1466301671301714012',
+  'scat34': '1471015400790822922'
+};
+
 const TARGET_BOT_IDS = ['1517523318557904986', '1518233162378117160', '1531274702067073157'];
 const ALLOWED_EXTS = ['.mp4','.gif','.gifv','.webm','.jpg','.jpeg','.png','.webp'];
 const LOG_CHANNEL_ID = '1530804280720887918';
@@ -45,6 +45,9 @@ console.error = (...args) => {
   const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
   logAndSend(`❌ ${msg}`, 'error');
 };
+
+// ---------- REST OF BOT CODE (unchanged except redirection logic) ----------
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
 // Cache
 const redditCache = new Map();
@@ -291,7 +294,7 @@ const sendLog = async (channelId, msg) => {
   }
 };
 
-client.once('clientReady', () => {
+client.once('ready', () => {
   console.log(`✅ Bot online as ${client.user.tag}`);
   client.user.setPresence({ activities: [{ name: 'Cleaning links...', type: ActivityType.Watching }], status: 'online' });
 });
@@ -401,8 +404,29 @@ client.on('messageCreate', async msg => {
       await msg.delete();
       console.log(`✅ Original message deleted`);
 
-      console.log(`📤 Sending cleaned message...`);
-      await formatMessage(msg.channel,
+      // ---------- REDIRECTION LOGIC ----------
+      // Determine target channel: redirect if subreddit matches mapping
+      let targetChannel = msg.channel;
+      const subForRedirect = (extracted?.subreddit || fallback.subreddit).toLowerCase();
+      if (SUBREDDIT_CHANNEL_MAP[subForRedirect]) {
+        try {
+          const channelId = SUBREDDIT_CHANNEL_MAP[subForRedirect];
+          targetChannel = await client.channels.fetch(channelId);
+          if (!targetChannel) {
+            console.error(`❌ Could not fetch channel ${channelId}, falling back to original`);
+            targetChannel = msg.channel;
+          } else {
+            console.log(`🔄 Redirecting to channel #${targetChannel.name} (${channelId}) for subreddit r/${subForRedirect}`);
+            await sendLog(LOG_CHANNEL_ID, `🔄 Redirected to <#${channelId}> because of subreddit r/${subForRedirect}`);
+          }
+        } catch (e) {
+          console.error(`❌ Error fetching redirect channel: ${e.message}, falling back to original`);
+          targetChannel = msg.channel;
+        }
+      }
+
+      console.log(`📤 Sending cleaned message to ${targetChannel.id}...`);
+      await formatMessage(targetChannel,
         extracted?.title || fallback.title,
         extracted?.subreddit || fallback.subreddit,
         extracted?.author || fallback.author,
@@ -415,7 +439,8 @@ client.on('messageCreate', async msg => {
       await sleep(2000);
       await sendLog(LOG_CHANNEL_ID,
         `✅ **Cleaned:**\n• From: **${msg.author.tag}**\n• Posted: ${allAllowed.length} URLs\n• Blocked: ${blocked.length} URLs` +
-        (extracted ? `\n• Reddit content extracted: ${extracted.urls.length} items` : '')
+        (extracted ? `\n• Reddit content extracted: ${extracted.urls.length} items` : '') +
+        (targetChannel.id !== msg.channel.id ? `\n• Redirected to <#${targetChannel.id}>` : '')
       );
     } catch (e) {
       console.error(`❌ Error: ${e.message}`);
