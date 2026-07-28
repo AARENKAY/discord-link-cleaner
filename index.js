@@ -10,7 +10,7 @@ const SUBREDDIT_CHANNEL_MAP = {
   'scat34': '1471015400790822922'
 };
 
-const TARGET_BOT_IDS = ['1517523318557904986', '1518233162378117160', '1531274702067073157'];
+const TARGET_BOT_IDS = ['1531274702067073157'];
 const ALLOWED_EXTS = ['.mp4','.gif','.gifv','.webm','.jpg','.jpeg','.png','.webp'];
 const LOG_CHANNEL_ID = '1530804280720887918';
 const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it'];
