@@ -1,31 +1,58 @@
 const express = require('express');
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
+
+// ---------- CLIENT FIRST ----------
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
+});
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.get('/health', (req, res) => res.json({ status: 'ok', bot: client.user?.tag || 'Starting...', uptime: process.uptime(), memory: process.memoryUsage(), ready: client.isReady(), timestamp: new Date().toISOString() }));
+// ---------- HEALTH ENDPOINT (client is now defined) ----------
+app.get('/health', (req, res) =>
+  res.json({
+    status: 'ok',
+    bot: client.user?.tag || 'Starting...',
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    ready: client.isReady(),
+    timestamp: new Date().toISOString()
+  })
+);
 app.get('/', (req, res) => res.send('Discord Link Cleaner Bot - Health: /health'));
 app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Health server on port ${PORT}`));
 
 // ---------- CONFIG ----------
-// 🧩 Subreddit → channel ID redirection
 const SUBREDDIT_CHANNEL_MAP = {
-  'realscatgirls': '1466301671301714012',
-  'scat34': '1471015400790822922'
+  realscatgirls: '1466301671301714012',
+  scat34: '1471015400790822922'
 };
 
 const TARGET_BOT_IDS = ['1531274702067073157'];
-const ALLOWED_EXTS = ['.mp4','.gif','.gifv','.webm','.jpg','.jpeg','.png','.webp'];
+const ALLOWED_EXTS = ['.mp4', '.gif', '.gifv', '.webm', '.jpg', '.jpeg', '.png', '.webp'];
 const LOG_CHANNEL_ID = '1530804280720887918';
 const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it'];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-const ANDROID_UA = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36';
-const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
+const ANDROID_UA =
+  'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36';
+const DESKTOP_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
 
 // ---------- LOGGER ----------
 const originalLog = console.log;
 const originalError = console.error;
+
+// Prevent Discord link embeds in logs
+const suppressEmbeds = text => {
+  if (!text) return text;
+  return text.replace(/https?:\/\/[^\s<>"]+/gi, '<$&>');
+};
 
 const logAndSend = async (message, level = 'log') => {
   const ts = new Date().toISOString();
@@ -33,7 +60,7 @@ const logAndSend = async (message, level = 'log') => {
   try {
     const channel = await client.channels.fetch(LOG_CHANNEL_ID);
     if (!channel) return;
-    let msg = `\`[${ts}]\` ${message}`;
+    let msg = `\`[${ts}]\` ${suppressEmbeds(message)}`;
     if (msg.length > 1900) msg = msg.slice(0, 1900) + '... (truncated)';
     await channel.send(msg);
   } catch (e) {
@@ -42,22 +69,15 @@ const logAndSend = async (message, level = 'log') => {
 };
 
 console.log = (...args) => {
-  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
   logAndSend(msg);
 };
 console.error = (...args) => {
-  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
   logAndSend(`❌ ${msg}`, 'error');
 };
 
-// ---------- REST OF BOT CODE (unchanged except redirection logic) ----------
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
-
-// Cache
-const redditCache = new Map();
-const CACHE_TTL = 5 * 60 * 1000;
-
-// --- URL cleaning ---
+// ---------- HELPERS ----------
 const cleanUrl = url => {
   if (!url) return url;
   let c = url.replace('www.redgifs.com', 'redgifs.com');
@@ -65,11 +85,11 @@ const cleanUrl = url => {
     const m = c.match(/preview\.redd\.it\/([^?]+)/);
     if (m) c = `https://i.redd.it/${m[1].split('?')[0]}`;
   }
-  if (c.match(/x\.com|twitter\.com/i)) c = c.replace(/https?:\/\/(www\.)?(x\.com|twitter\.com)/i, 'https://vxtwitter.com');
+  if (c.match(/x\.com|twitter\.com/i))
+    c = c.replace(/https?:\/\/(www\.)?(x\.com|twitter\.com)/i, 'https://vxtwitter.com');
   return c.split('?')[0].replace(/\/+$/, '');
 };
 
-// --- Recursive search ---
 const deepFind = (obj, test) => {
   if (!obj || typeof obj !== 'object') return null;
   if (test(obj)) return obj;
@@ -87,7 +107,6 @@ const deepFind = (obj, test) => {
   return null;
 };
 
-// --- Format cleaned message ---
 const formatMessage = async (ch, title, sub, author, urls, isGallery, isVideo) => {
   let msg = `## ${title}\n\n*Posted in* **r/${sub}** *by* **${author}**\n\n`;
   if (isGallery && urls.length > 1) {
@@ -98,7 +117,7 @@ const formatMessage = async (ch, title, sub, author, urls, isGallery, isVideo) =
       msg = '';
     }
   } else if (isVideo) {
-    urls.forEach(u => msg += `[Video/Gif](${u})\n\n`);
+    urls.forEach(u => (msg += `[Video/Gif](${u})\n\n`));
     await ch.send(msg);
   } else {
     if (urls.length > 1) msg += `**Images:** ${urls.length}\n\n`;
@@ -107,7 +126,11 @@ const formatMessage = async (ch, title, sub, author, urls, isGallery, isVideo) =
       let groupMsg = '';
       group.forEach(u => {
         const low = u.toLowerCase();
-        const type = low.endsWith('.gif') ? 'Gif' : (low.match(/\.(jpg|jpeg|png|webp)$/) ? 'Pic' : 'Media');
+        const type = low.endsWith('.gif')
+          ? 'Gif'
+          : low.match(/\.(jpg|jpeg|png|webp)$/)
+            ? 'Pic'
+            : 'Media';
         groupMsg += `[${type}](${u})\n\n`;
       });
       if (group.length) {
@@ -120,7 +143,6 @@ const formatMessage = async (ch, title, sub, author, urls, isGallery, isVideo) =
   await ch.send('═════════════════════════════════');
 };
 
-// --- fetch with always a User-Agent ---
 async function fetchWithFallback(url, options = {}, retryCount = 0) {
   const defaultHeaders = { 'User-Agent': DESKTOP_UA };
   const headers = { ...defaultHeaders, ...(options.headers || {}) };
@@ -163,7 +185,6 @@ async function fetchWithFallback(url, options = {}, retryCount = 0) {
   }
 }
 
-// --- Slugify (Reddit style) ---
 function slugify(title) {
   return title
     .toLowerCase()
@@ -173,7 +194,10 @@ function slugify(title) {
     .replace(/^_|_$/g, '');
 }
 
-// --- Reddit extractor (uses full slugged URL) ---
+// Reddit cache
+const redditCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000;
+
 const extractReddit = async (subreddit, postId, title, retryCount = 0) => {
   if (!subreddit || subreddit === 'unknown') {
     console.log(`⚠️ No subreddit available, skipping extraction`);
@@ -203,14 +227,19 @@ const extractReddit = async (subreddit, postId, title, retryCount = 0) => {
 
     console.log(`   ✅ Found post: "${post.title}" in r/${post.subreddit} by ${post.author}`);
 
-    let urls = [], hasVideo = false;
+    let urls = [],
+      hasVideo = false;
     const vid = post.preview?.reddit_video_preview?.fallback_url || deepFind(post, o => o.fallback_url);
     if (vid) {
       urls.push(cleanUrl(vid));
       hasVideo = true;
       console.log(`   🎥 Found video: ${vid}`);
     } else {
-      const rg = post.url?.toLowerCase().includes('redgifs.com') ? post.url : (post.url_overridden_by_dest?.toLowerCase().includes('redgifs.com') ? post.url_overridden_by_dest : null);
+      const rg = post.url?.toLowerCase().includes('redgifs.com')
+        ? post.url
+        : post.url_overridden_by_dest?.toLowerCase().includes('redgifs.com')
+          ? post.url_overridden_by_dest
+          : null;
       if (rg) {
         urls = [cleanUrl(rg)];
         hasVideo = true;
@@ -260,7 +289,6 @@ const extractReddit = async (subreddit, postId, title, retryCount = 0) => {
   }
 };
 
-// --- Helper: extract post ID from any Reddit link ---
 function getRedditPostId(url) {
   let match = url.match(/redd\.it\/(\w+)/);
   if (match) return match[1];
@@ -272,10 +300,13 @@ function getRedditPostId(url) {
 }
 
 function isRedditPostUrl(url) {
-  return /redd\.it\/\w+/.test(url) || /reddit\.com\/r\/\w+\/comments\/\w+/.test(url) || /reddit\.com\/gallery\/\w+/.test(url);
+  return (
+    /redd\.it\/\w+/.test(url) ||
+    /reddit\.com\/r\/\w+\/comments\/\w+/.test(url) ||
+    /reddit\.com\/gallery\/\w+/.test(url)
+  );
 }
 
-// --- Fixed fallbackInfo: extracts title, subreddit, author correctly ---
 const fallbackInfo = content => {
   const subMatch = content.match(/r\/([\w]+)/i);
   const sub = subMatch ? subMatch[1] : 'unknown';
@@ -292,15 +323,19 @@ const fallbackInfo = content => {
 const sendLog = async (channelId, msg) => {
   try {
     const channel = await client.channels.fetch(channelId);
-    if (channel) await channel.send(msg);
+    if (channel) await channel.send(suppressEmbeds(msg));
   } catch (e) {
     console.error('Log channel error:', e.message);
   }
 };
 
+// ---------- BOT EVENTS ----------
 client.once('clientReady', () => {
   console.log(`✅ Bot online as ${client.user.tag}`);
-  client.user.setPresence({ activities: [{ name: 'Cleaning links...', type: ActivityType.Watching }], status: 'online' });
+  client.user.setPresence({
+    activities: [{ name: 'Cleaning links...', type: ActivityType.Watching }],
+    status: 'online'
+  });
 });
 
 client.on('messageCreate', async msg => {
@@ -309,7 +344,11 @@ client.on('messageCreate', async msg => {
   console.log(`\n📩 New message from ${msg.author.tag} in #${msg.channel.name}`);
   console.log(`📝 Full content:\n${msg.content}`);
 
-  await sendLog(LOG_CHANNEL_ID, `🔍 Processing message from **${msg.author.tag}** in <#${msg.channel.id}>\n📝 **Content:**\n${msg.content.slice(0,500)}${msg.content.length>500?'...':''}`);
+  // sendLog() applies suppressEmbeds internally, so we pass raw content
+  await sendLog(
+    LOG_CHANNEL_ID,
+    `🔍 Processing message from **${msg.author.tag}** in <#${msg.channel.id}>\n📝 **Content:**\n${msg.content.slice(0, 500)}${msg.content.length > 500 ? '...' : ''}`
+  );
 
   const urls = msg.content.match(/https?:\/\/[^\s<>"]+/gi);
   if (!urls) {
@@ -321,9 +360,12 @@ client.on('messageCreate', async msg => {
   const fallback = fallbackInfo(msg.content);
   console.log(`ℹ️ Fallback info - Title: "${fallback.title}", Sub: ${fallback.subreddit}, Author: ${fallback.author}`);
 
-  let allowed = [], blocked = [], seen = new Set(), extracted = null;
+  let allowed = [],
+    blocked = [],
+    seen = new Set(),
+    extracted = null;
 
-  // First pass: detect Reddit post links and extract (no shortlink fetch)
+  // First pass: detect Reddit post links and extract
   for (const u of urls) {
     if (isRedditPostUrl(u)) {
       const postId = getRedditPostId(u);
@@ -355,9 +397,14 @@ client.on('messageCreate', async msg => {
     }
     seen.add(clean);
     const low = clean.toLowerCase();
-    if (low.includes('x.com/') || low.includes('twitter.com/') || low.includes('redgifs.com') ||
-        low.includes('i.redd.it') || low.includes('v.redd.it') ||
-        ALLOWED_EXTS.some(ext => low.includes(ext) || low.endsWith(ext))) {
+    if (
+      low.includes('x.com/') ||
+      low.includes('twitter.com/') ||
+      low.includes('redgifs.com') ||
+      low.includes('i.redd.it') ||
+      low.includes('v.redd.it') ||
+      ALLOWED_EXTS.some(ext => low.includes(ext) || low.endsWith(ext))
+    ) {
       allowed.push(clean);
       console.log(`   ✅ Allowed: ${clean}`);
       if (low.includes('redgifs.com')) console.log(`     ↳ (Redgifs)`);
@@ -382,19 +429,26 @@ client.on('messageCreate', async msg => {
   }
 
   // Prioritize Reddit native media
-  const hasRedditNative = allAllowed.some(url => REDDIT_NATIVE_DOMAINS.some(domain => url.includes(domain)));
+  const hasRedditNative = allAllowed.some(url =>
+    REDDIT_NATIVE_DOMAINS.some(domain => url.includes(domain))
+  );
   if (hasRedditNative) {
     console.log(`🎯 Reddit native media detected, filtering out external...`);
-    allAllowed = allAllowed.filter(url => REDDIT_NATIVE_DOMAINS.some(domain => url.includes(domain)));
+    allAllowed = allAllowed.filter(url =>
+      REDDIT_NATIVE_DOMAINS.some(domain => url.includes(domain))
+    );
     console.log(`   ↳ Remaining native URLs:`, allAllowed);
   }
 
   console.log(`📊 Final allowed URLs (${allAllowed.length}):`, allAllowed);
   console.log(`🚫 Blocked URLs (${blocked.length}):`, blocked);
 
-  await sendLog(LOG_CHANNEL_ID,
+  await sendLog(
+    LOG_CHANNEL_ID,
     `🔎 **Analysis:**\n• From: **${msg.author.tag}**\n• Title: ${extracted?.title || fallback.title}\n• Subreddit: r/${extracted?.subreddit || fallback.subreddit}\n• URLs: ${urls.length} total, ${allAllowed.length} allowed, ${blocked.length} blocked` +
-    (extracted ? `\n• Reddit content: ${extracted.urls.length} items${extracted.hasGallery?' (gallery)':''}${extracted.hasVideo?' (video)':''}` : '')
+      (extracted
+        ? `\n• Reddit content: ${extracted.urls.length} items${extracted.hasGallery ? ' (gallery)' : ''}${extracted.hasVideo ? ' (video)' : ''}`
+        : '')
   );
 
   if (allAllowed.length === 0 && blocked.length) {
@@ -409,7 +463,6 @@ client.on('messageCreate', async msg => {
       console.log(`✅ Original message deleted`);
 
       // ---------- REDIRECTION LOGIC ----------
-      // Determine target channel: redirect if subreddit matches mapping
       let targetChannel = msg.channel;
       const subForRedirect = (extracted?.subreddit || fallback.subreddit).toLowerCase();
       if (SUBREDDIT_CHANNEL_MAP[subForRedirect]) {
@@ -430,7 +483,8 @@ client.on('messageCreate', async msg => {
       }
 
       console.log(`📤 Sending cleaned message to ${targetChannel.id}...`);
-      await formatMessage(targetChannel,
+      await formatMessage(
+        targetChannel,
         extracted?.title || fallback.title,
         extracted?.subreddit || fallback.subreddit,
         extracted?.author || fallback.author,
@@ -441,10 +495,11 @@ client.on('messageCreate', async msg => {
       console.log(`✅ Cleaned message sent`);
 
       await sleep(2000);
-      await sendLog(LOG_CHANNEL_ID,
+      await sendLog(
+        LOG_CHANNEL_ID,
         `✅ **Cleaned:**\n• From: **${msg.author.tag}**\n• Posted: ${allAllowed.length} URLs\n• Blocked: ${blocked.length} URLs` +
-        (extracted ? `\n• Reddit content extracted: ${extracted.urls.length} items` : '') +
-        (targetChannel.id !== msg.channel.id ? `\n• Redirected to <#${targetChannel.id}>` : '')
+          (extracted ? `\n• Reddit content extracted: ${extracted.urls.length} items` : '') +
+          (targetChannel.id !== msg.channel.id ? `\n• Redirected to <#${targetChannel.id}>` : '')
       );
     } catch (e) {
       console.error(`❌ Error: ${e.message}`);
@@ -453,8 +508,12 @@ client.on('messageCreate', async msg => {
   }
 });
 
+// ---------- START BOT ----------
 const BOT_TOKEN = process.env.BOT_TOKEN;
-if (!BOT_TOKEN) { console.error('❌ BOT_TOKEN not set!'); process.exit(1); }
+if (!BOT_TOKEN) {
+  console.error('❌ BOT_TOKEN not set!');
+  process.exit(1);
+}
 client.login(BOT_TOKEN).catch(error => {
   console.error('❌ Login failed:', error);
   process.exit(1);
