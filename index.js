@@ -29,14 +29,14 @@ app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Health server on port ${PORT
 
 // ---------- CONFIG ----------
 const SUBREDDIT_CHANNEL_MAP = {
-  realscatgirls: '1466301671301714012',
-  poopingvixens: '1466301671301714012',
-  DirtyGirls2: '1466301671301714012',
-  ScatGifs: '1466301671301714012',
-  ScatPorn2: '1466301671301714012',
-  scat34: '1471015400790822922',
-  girlsmasturbating: '1535261507410206832',
-  fingerherass: '1535261507410206832'
+   realscatgirls: '1466301671301714012',
+   poopingvixens: '1466301671301714012',
+   DirtyGirls2: '1466301671301714012',
+   ScatGifs: '1466301671301714012',
+   ScatPorn2: '1466301671301714012',
+   scat34: '1471015400790822922',
+   girlsmasturbating: '1535261507410206832',
+   fingerherass: '1535261507410206832'
 };
 
 const TARGET_BOT_IDS = ['1531274702067073157'];
