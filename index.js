@@ -553,5 +553,7 @@ if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN not set!');  
   process.exit(1);  
 }  
-client.login(BOT_TOKEN).catch(error => {  
-  console.error('❌ Login failed:', error
+client.login(BOT_TOKEN).catch(error => {
+  console.error('❌ Login failed:', error);
+  process.exit(1);
+});
