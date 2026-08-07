@@ -29,24 +29,20 @@ app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Health server on port ${PORT
 
 // ---------- CONFIG ----------
 const SUBREDDIT_CHANNEL_MAP = {
-   realscatgirls: '1466301671301714012',
-   poopingvixens: '1466301671301714012',
-   DirtyGirls2: '1466301671301714012',
-   ScatGifs: '1466301671301714012',
-   ScatPorn2: '1466301671301714012',
-   scat34: '1471015400790822922',
-   girlsmasturbating: '1535261507410206832',
-   fingerherass: '1535261507410206832'
+  realscatgirls: '1466301671301714012',
+  poopingvixens: '1466301671301714012',
+  dirtygirls2: '1466301671301714012',
+  scatgifs: '1466301671301714012',
+  scatporn2: '1466301671301714012',
+  scat34: '1471015400790822922',
+  girlsmasturbating: '1535261507410206832',
+  fingerherass: '1535261507410206832'
 };
 
 const TARGET_BOT_IDS = ['1531274702067073157'];
 const ALLOWED_EXTS = ['.mp4', '.gif', '.gifv', '.webm', '.jpg', '.jpeg', '.png', '.webp'];
 const LOG_CHANNEL_ID = '1530804280720887918';
-const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it'];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-const DESKTOP_UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
 
 // ---------- LOGGER ----------
 const originalLog = console.log;
@@ -83,74 +79,54 @@ console.error = (...args) => {
 // ---------- HELPERS ----------
 const cleanUrl = url => {
   if (!url) return url;
-  let c = url.replace('www.redgifs.com', 'redgifs.com');
-  if (c.includes('preview.redd.it')) {
+  // Case‑insensitive redgifs normalisation
+  let c = url.replace(/www\.redgifs\.com/i, 'redgifs.com');
+  // Convert preview.redd.it to i.redd.it (host‑based regex)
+  if (/^https?:\/\/preview\.redd\.it/i.test(c)) {
     const m = c.match(/preview\.redd\.it\/([^?]+)/);
     if (m) c = `https://i.redd.it/${m[1].split('?')[0]}`;
   }
-  if (c.match(/x\.com|twitter\.com/i))
-    c = c.replace(/https?:\/\/(www\.)?(x\.com|twitter\.com)/i, 'https://vxtwitter.com');
   return c.split('?')[0].replace(/\/+$/, '');
 };
 
-const formatMessage = async (ch, title, sub, author, urls, isGallery, isVideo) => {
-  let msg = `## ${title}\n\n*Posted in* **r/${sub}** *by* **${author}**\n\n`;
-  if (isGallery && urls.length > 1) {
-    msg += `**Gallery:** ${urls.length} images\n\n`;
-    for (let i = 0; i < urls.length; i += 5) {
-      const group = urls.slice(i, i + 5).map((u, idx) => `[Pic${idx + 1 + i}](${u})`).join(' ');
-      await ch.send(msg + group + '\n\n');
-      msg = '';
+// Host‑based regex helpers
+const isRedgifs = url => /^https?:\/\/(?:www\.)?redgifs\.com\b/i.test(url);
+const isRedditNative = url => /^https?:\/\/(?:i|v)\.redd\.it\b/i.test(url);
+const isVideoUrl = url =>
+  isRedgifs(url) ||
+  /^https?:\/\/v\.redd\.it\b/i.test(url) ||
+  /\.(mp4|webm|gifv|gif)$/i.test(url);
+
+// formatMessage with newline‑aware chunking and empty‑chunk guard
+const formatMessage = async (ch, title, sub, author, urls) => {
+  let header = `## ${title}\n\n*Posted in* **r/${sub}** *by* **${author}**\n\n`;
+  let output = '';
+  for (const u of urls) {
+    const label = isVideoUrl(u) ? 'Video/Gif' : 'Pic';
+    output += `[${label}](${u})\n\n`;
+  }
+  const fullMessage = header + output;
+
+  // Split by newline boundaries, each chunk ≤ 1900 characters
+  const lines = fullMessage.split('\n');
+  const chunks = [];
+  let current = '';
+  for (const line of lines) {
+    // Only push if current is non‑empty to avoid empty chunks
+    if ((current + line).length > 1900 && current) {
+      chunks.push(current);
+      current = '';
     }
-  } else if (isVideo) {
-    urls.forEach(u => (msg += `[Video/Gif](${u})\n\n`));
-    await ch.send(msg);
-  } else {
-    if (urls.length > 1) msg += `**Images:** ${urls.length}\n\n`;
-    for (let i = 0; i < urls.length; i += 5) {
-      const group = urls.slice(i, i + 5);
-      let groupMsg = '';
-      group.forEach(u => {
-        const low = u.toLowerCase();
-        const type = low.endsWith('.gif')
-          ? 'Gif'
-          : low.match(/\.(jpg|jpeg|png|webp)$/)
-            ? 'Pic'
-            : 'Media';
-        groupMsg += `[${type}](${u})\n\n`;
-      });
-      if (group.length) {
-        await ch.send(msg + groupMsg);
-        msg = '';
-      }
-    }
-    if (msg.trim()) await ch.send(msg);
+    current += line + '\n';
+  }
+  if (current) chunks.push(current);
+
+  for (const chunk of chunks) {
+    await ch.send(chunk);
   }
   await ch.send('═════════════════════════════════');
 };
 
-// ---------- SIMPLE REDDIT MEDIA EXTRACTOR ----------
-function extractRedditMedia(content) {
-  const urls = content.match(/https?:\/\/[^\s<>"]+/gi) || [];
-  const media = [];
-
-  for (const url of urls) {
-    const clean = cleanUrl(url);
-    // Native Reddit media
-    if (clean.includes('i.redd.it/') || clean.includes('v.redd.it/')) {
-      media.push(clean);
-    }
-    // Redgifs
-    if (clean.includes('redgifs.com/')) {
-      media.push(clean);
-    }
-  }
-
-  // Remove duplicates
-  return [...new Set(media)];
-}
-
-// ---------- FALLBACK INFO FROM YAGPDB FORMAT ----------
 const fallbackInfo = content => {
   const subMatch = content.match(/r\/([\w]+)/i);
   const sub = subMatch ? subMatch[1] : 'unknown';
@@ -173,6 +149,16 @@ const sendLog = async (channelId, msg) => {
   }
 };
 
+// ---------- DUPLICATE MESSAGE CACHE ----------
+const processedMessages = new Set();
+const CACHE_CLEANUP_INTERVAL = 10 * 60 * 1000; // 10 minutes
+
+// Cleanup timer – .unref() so it doesn't keep the process alive
+const cleanupTimer = setInterval(() => {
+  processedMessages.clear();
+}, CACHE_CLEANUP_INTERVAL);
+cleanupTimer.unref();
+
 // ---------- BOT EVENTS ----------
 client.once('clientReady', () => {
   console.log(`✅ Bot online as ${client.user.tag}`);
@@ -183,7 +169,12 @@ client.once('clientReady', () => {
 });
 
 client.on('messageCreate', async msg => {
+  // First, ignore messages that aren't from the target bot(s)
   if (msg.author.id === client.user.id || !TARGET_BOT_IDS.includes(msg.author.id)) return;
+
+  // Then check duplicate cache – only for messages we actually care about
+  if (processedMessages.has(msg.id)) return;
+  processedMessages.add(msg.id);
 
   console.log(`\n📩 New message from ${msg.author.tag} in #${msg.channel.name}`);
   console.log(`📝 Full content:\n${msg.content}`);
@@ -193,7 +184,6 @@ client.on('messageCreate', async msg => {
     `🔍 Processing message from **${msg.author.tag}** in <#${msg.channel.id}>\n📝 **Content:**\n${msg.content.slice(0, 500)}${msg.content.length > 500 ? '...' : ''}`
   );
 
-  // Extract all URLs from the message
   const urls = msg.content.match(/https?:\/\/[^\s<>"]+/gi);
   if (!urls) {
     console.log(`ℹ️ No URLs found in message`);
@@ -204,79 +194,45 @@ client.on('messageCreate', async msg => {
   const fallback = fallbackInfo(msg.content);
   console.log(`ℹ️ Fallback info - Title: "${fallback.title}", Sub: ${fallback.subreddit}, Author: ${fallback.author}`);
 
-  // Extract Reddit native media and Redgifs
-  const redditMedia = extractRedditMedia(msg.content);
-
-  let extracted = null;
-  if (redditMedia.length) {
-    console.log(`✅ Found Reddit media:`, redditMedia);
-    extracted = {
-      urls: redditMedia,
-      title: fallback.title,
-      subreddit: fallback.subreddit,
-      author: fallback.author,
-      hasGallery: redditMedia.length > 1,
-      hasVideo: redditMedia.some(u => u.includes('v.redd.it'))
-    };
-  } else {
-    console.log(`⚠️ No Reddit native media or Redgifs found in message`);
-  }
-
-  // ---- CLASSIFY REMAINING URLs (if any) ----
   let allowed = [],
     blocked = [],
     seen = new Set();
 
+  // Classify URLs using host‑based and extension checks
+  console.log(`🔍 Classifying URLs...`);
   for (const u of urls) {
     const clean = cleanUrl(u);
     if (seen.has(clean)) {
       console.log(`   🔁 Duplicate (skipped): ${clean}`);
       continue;
     }
-    seen.add(clean);
+
     const low = clean.toLowerCase();
-    // Allowed: Twitter/X, Redgifs, Reddit native, and common media extensions
-    if (
-      low.includes('x.com/') ||
-      low.includes('twitter.com/') ||
-      low.includes('redgifs.com') ||
-      low.includes('i.redd.it') ||
-      low.includes('v.redd.it') ||
-      ALLOWED_EXTS.some(ext => low.includes(ext) || low.endsWith(ext))
-    ) {
+    const isRedgifsMatch = isRedgifs(clean);
+    const isRedditNativeMatch = isRedditNative(clean);
+    const hasAllowedExt = ALLOWED_EXTS.some(ext => low.endsWith(ext));
+
+    if (isRedgifsMatch || isRedditNativeMatch || hasAllowedExt) {
       allowed.push(clean);
+      seen.add(clean);
       console.log(`   ✅ Allowed: ${clean}`);
-      if (low.includes('redgifs.com')) console.log(`     ↳ (Redgifs)`);
+      if (isRedgifsMatch) console.log(`     ↳ (Redgifs)`);
     } else {
       blocked.push(clean);
       console.log(`   ❌ Blocked: ${clean}`);
     }
   }
 
-  // Combine allowed with extracted (deduplicate)
   let allAllowed = [...allowed];
-  if (extracted) {
-    extracted.urls.forEach(e => {
-      if (!seen.has(e)) {
-        allAllowed.push(e);
-        seen.add(e);
-        console.log(`   ✅ Added extracted: ${e}`);
-      } else {
-        console.log(`   🔁 Extracted URL already present: ${e}`);
-      }
-    });
-  }
 
-  // Prioritize Reddit native media (filter out external if native present)
-  const hasRedditNative = allAllowed.some(url =>
-    REDDIT_NATIVE_DOMAINS.some(domain => url.includes(domain))
-  );
+  // Prioritize Reddit native media, but keep Redgifs as well
+  const hasRedditNative = allAllowed.some(url => isRedditNative(url));
   if (hasRedditNative) {
-    console.log(`🎯 Reddit native media detected, filtering out external...`);
+    console.log(`🎯 Reddit native media detected, filtering out other external (keeping Redgifs)...`);
     allAllowed = allAllowed.filter(url =>
-      REDDIT_NATIVE_DOMAINS.some(domain => url.includes(domain))
+      isRedditNative(url) || isRedgifs(url)
     );
-    console.log(`   ↳ Remaining native URLs:`, allAllowed);
+    console.log(`   ↳ Remaining URLs:`, allAllowed);
   }
 
   console.log(`📊 Final allowed URLs (${allAllowed.length}):`, allAllowed);
@@ -284,10 +240,7 @@ client.on('messageCreate', async msg => {
 
   await sendLog(
     LOG_CHANNEL_ID,
-    `🔎 **Analysis:**\n• From: **${msg.author.tag}**\n• Title: ${extracted?.title || fallback.title}\n• Subreddit: r/${extracted?.subreddit || fallback.subreddit}\n• URLs: ${urls.length} total, ${allAllowed.length} allowed, ${blocked.length} blocked` +
-      (extracted
-        ? `\n• Reddit content: ${extracted.urls.length} items${extracted.hasGallery ? ' (gallery)' : ''}${extracted.hasVideo ? ' (video)' : ''}`
-        : '')
+    `🔎 **Analysis:**\n• From: **${msg.author.tag}**\n• Title: ${fallback.title}\n• Subreddit: r/${fallback.subreddit}\n• URLs: ${urls.length} total, ${allAllowed.length} allowed, ${blocked.length} blocked`
   );
 
   if (allAllowed.length === 0 && blocked.length) {
@@ -303,7 +256,7 @@ client.on('messageCreate', async msg => {
 
       // ---------- REDIRECTION LOGIC ----------
       let targetChannel = msg.channel;
-      const subForRedirect = (extracted?.subreddit || fallback.subreddit).toLowerCase();
+      const subForRedirect = fallback.subreddit.toLowerCase();
       if (SUBREDDIT_CHANNEL_MAP[subForRedirect]) {
         try {
           const channelId = SUBREDDIT_CHANNEL_MAP[subForRedirect];
@@ -324,12 +277,10 @@ client.on('messageCreate', async msg => {
       console.log(`📤 Sending cleaned message to ${targetChannel.id}...`);
       await formatMessage(
         targetChannel,
-        extracted?.title || fallback.title,
-        extracted?.subreddit || fallback.subreddit,
-        extracted?.author || fallback.author,
-        allAllowed,
-        extracted?.hasGallery || false,
-        extracted?.hasVideo || false
+        fallback.title,
+        fallback.subreddit,
+        fallback.author,
+        allAllowed
       );
       console.log(`✅ Cleaned message sent`);
 
@@ -337,7 +288,6 @@ client.on('messageCreate', async msg => {
       await sendLog(
         LOG_CHANNEL_ID,
         `✅ **Cleaned:**\n• From: **${msg.author.tag}**\n• Posted: ${allAllowed.length} URLs\n• Blocked: ${blocked.length} URLs` +
-          (extracted ? `\n• Reddit content extracted: ${extracted.urls.length} items` : '') +
           (targetChannel.id !== msg.channel.id ? `\n• Redirected to <#${targetChannel.id}>` : '')
       );
     } catch (e) {
