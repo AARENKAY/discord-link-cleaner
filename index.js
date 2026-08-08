@@ -40,7 +40,8 @@ const SUBREDDIT_CHANNEL_MAP = {
 };
 
 const TARGET_BOT_IDS = ['1531274702067073157'];
-const ALLOWED_EXTS = ['.mp4', '.gif', '.gifv', '.webm', '.jpg', '.jpeg', '.png', '.webp'];
+// Only GIFs and videos – no images
+const ALLOWED_EXTS = ['.mp4', '.gif', '.gifv', '.webm'];
 const LOG_CHANNEL_ID = '1530804280720887918';
 const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it'];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -103,9 +104,9 @@ const formatMessage = async (ch, title, sub, author, urls) => {
       const low = u.toLowerCase();
       const type = low.endsWith('.gif')
         ? 'Gif'
-        : low.match(/\.(jpg|jpeg|png|webp)$/)
-          ? 'Pic'
-          : 'Media';
+        : low.match(/\.(mp4|webm|gifv)$/)
+          ? 'Video'
+          : 'Media'; // fallback (should not happen with our filter)
       groupMsg += `[${type}](${u})\n\n`;
     });
     if (group.length) {
