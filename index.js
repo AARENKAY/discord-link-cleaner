@@ -28,263 +28,116 @@ app.get('/', (req, res) => res.send('Discord Link Cleaner Bot - Health: /health'
 app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Health server on port ${PORT}`));
 
 // ---------- CONFIG ----------
-// Map channels to their associated subreddits (inverted from previous SUBREDDIT_CHANNEL_MAP)
-const CHANNEL_SUBREDDIT_MAP = {
-  '1466301671301714012': [
-    'realscatgirls',
-    'poopingvixens',
-    'dirtygirls2',
-    'scatgifs',
-    'scatporn2'
-  ],
-  '1471015400790822922': [
-    'scat34'
-  ],
-  '1535261507410206832': [
-    'girlsmasturbating',
-    'fingerherass'
-  ]
+const SUBREDDIT_CHANNEL_MAP = {
+  realscatgirls: '1466301671301714012',
+  poopingvixens: '1466301671301714012',
+  dirtygirls2: '1466301671301714012',
+  scatgifs: '1466301671301714012',
+  scatporn2: '1466301671301714012',
+  scat34: '1471015400790822922',
+  girlsmasturbating: '1535261507410206832',
+  fingerherass: '1535261507410206832'
 };
-
-// Build reverse lookup for O(1) redirection (normalize subreddit names, using null-prototype object)
-const SUBREDDIT_CHANNEL_LOOKUP = Object.create(null);
-for (const [channelId, subs] of Object.entries(CHANNEL_SUBREDDIT_MAP)) {
-  for (const sub of subs) {
-    SUBREDDIT_CHANNEL_LOOKUP[sub.toLowerCase()] = channelId;
-  }
-}
 
 const TARGET_BOT_IDS = ['1531274702067073157'];
 const ALLOWED_EXTS = ['.mp4', '.gif', '.gifv', '.webm', '.jpg', '.jpeg', '.png', '.webp'];
 const LOG_CHANNEL_ID = '1530804280720887918';
-const MAX_URLS_PER_MESSAGE = 100;
-const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const MAX_CACHE_SIZE = 5000;
-const MAX_TITLE_LENGTH = 200;
+const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it'];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// ---------- LOGGER WITH RECURSION GUARD AND CIRCULAR SAFETY ----------
-let isLogging = false;
-let logChannelCache = null;
-
-const getLogChannel = async () => {
-  try {
-    if (!logChannelCache || !logChannelCache.isTextBased()) {
-      logChannelCache = await client.channels.fetch(LOG_CHANNEL_ID);
-    }
-    return logChannelCache;
-  } catch (e) {
-    logChannelCache = null;
-    throw e;
-  }
-};
-
+// ---------- LOGGER ----------
 const originalLog = console.log;
 const originalError = console.error;
-const originalWarn = console.warn;
 
+// Prevent Discord link embeds in logs
 const suppressEmbeds = text => {
   if (!text) return text;
   return text.replace(/https?:\/\/[^\s<>"]+/gi, '<$&>');
 };
 
-const safeStringify = (a) => {
-  if (typeof a !== 'object' || a === null) return String(a);
-  try {
-    const str = JSON.stringify(a, (_, value) =>
-      typeof value === 'bigint' ? value.toString() : value,
-      2
-    );
-    return str.length > 1000 ? str.slice(0, 1000) + '…' : str;
-  } catch {
-    return '[Circular Object]';
-  }
-};
-
 const logAndSend = async (message, level = 'log') => {
   const ts = new Date().toISOString();
   originalLog(`[${ts}] ${message}`);
-
-  // Avoid logging before client is ready
-  if (!client.isReady()) return;
-  if (isLogging) return;
-  isLogging = true;
-
   try {
-    const channel = await getLogChannel();
+    const channel = await client.channels.fetch(LOG_CHANNEL_ID);
     if (!channel) return;
     let msg = `\`[${ts}]\` ${suppressEmbeds(message)}`;
-    if (msg.length > 1900) msg = msg.slice(0, 1900) + '...';
+    if (msg.length > 1900) msg = msg.slice(0, 1900) + '... (truncated)';
     await channel.send(msg);
   } catch (e) {
     originalError('Failed to send log to Discord:', e.message);
-  } finally {
-    isLogging = false;
   }
 };
 
 console.log = (...args) => {
-  const msg = args.map(safeStringify).join(' ');
-  void logAndSend(msg);
+  const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+  logAndSend(msg);
 };
 console.error = (...args) => {
-  const msg = args.map(safeStringify).join(' ');
-  void logAndSend(`❌ ${msg}`, 'error');
-};
-console.warn = (...args) => {
-  const msg = args.map(safeStringify).join(' ');
-  void logAndSend(`⚠️ ${msg}`);
+  const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+  logAndSend(`❌ ${msg}`, 'error');
 };
 
 // ---------- HELPERS ----------
 const cleanUrl = url => {
   if (!url) return url;
-  // Case‑insensitive redgifs normalisation
-  let c = url.replace(/www\.redgifs\.com/i, 'redgifs.com');
-  // Convert preview.redd.it to i.redd.it (host‑based regex)
-  if (/^https?:\/\/preview\.redd\.it/i.test(c)) {
+  let c = url.replace('www.redgifs.com', 'redgifs.com');
+  if (c.includes('preview.redd.it')) {
     const m = c.match(/preview\.redd\.it\/([^?]+)/);
     if (m) c = `https://i.redd.it/${m[1].split('?')[0]}`;
   }
-  // Remove query, trailing punctuation, and trailing slashes
-  c = c.split('?')[0];
-  c = c.replace(/[)>.,!?]+$/, '');
-  c = c.replace(/\/+$/, '');
-  return c;
+  if (c.match(/x\.com|twitter\.com/i))
+    c = c.replace(/https?:\/\/(www\.)?(x\.com|twitter\.com)/i, 'https://vxtwitter.com');
+  return c.split('?')[0].replace(/\/+$/, '');
 };
 
-// Host‑based regex helpers
-const isRedgifs = url => /^https?:\/\/(?:www\.)?redgifs\.com\b/i.test(url);
-const isRedditNative = url => /^https?:\/\/(?:i|v)\.redd\.it\b/i.test(url);
-const isVideoUrl = url =>
-  isRedgifs(url) ||
-  /^https?:\/\/v\.redd\.it\b/i.test(url) ||
-  /\.(mp4|webm|gifv|gif)$/i.test(url);
-
-// formatMessage with newline‑aware chunking, link limit, and permission check
 const formatMessage = async (ch, title, sub, author, urls) => {
-  // Cap the number of links to avoid Discord rejection
-  if (urls.length > MAX_URLS_PER_MESSAGE) {
-    console.warn(`Truncated ${urls.length} URLs to ${MAX_URLS_PER_MESSAGE}`);
-    urls = urls.slice(0, MAX_URLS_PER_MESSAGE);
-  }
+  let msg = `## ${title}\n\n*Posted in* **r/${sub}** *by* **${author}**\n\n`;
 
-  // Limit title length to avoid overly large headers
-  const safeTitle = title.length > MAX_TITLE_LENGTH
-    ? title.slice(0, MAX_TITLE_LENGTH) + '…'
-    : title;
+  if (urls.length > 1) msg += `**Media:** ${urls.length}\n\n`;
 
-  let header = `## ${safeTitle}\n\n*Posted in* **r/${sub}** *by* **${author}**\n\n`;
-  let output = '';
-  for (const u of urls) {
-    const label = isVideoUrl(u) ? 'Video/Gif' : 'Pic';
-    // Escape parentheses and backslashes to prevent broken Markdown links
-    const markdownUrl = u.replace(/\\/g, '\\\\').replace(/\)/g, '\\)');
-    output += `[${label}](${markdownUrl})\n\n`;
-  }
-  const fullMessage = header + output;
-
-  // Split by newline boundaries, each chunk ≤ 1900 characters
-  const lines = fullMessage.split('\n');
-  const chunks = [];
-  let current = '';
-  for (const line of lines) {
-    if ((current + line).length > 1900 && current) {
-      chunks.push(current);
-      current = '';
-    }
-    current += line + '\n';
-  }
-  if (current) chunks.push(current);
-
-  // Guard against empty messages
-  if (!chunks.length) return false;
-
-  // Check send permissions: SendMessages is mandatory, EmbedLinks is optional
-  const permissions = ch.permissionsFor(client.user);
-  if (!permissions?.has('SendMessages')) {
-    console.error(`❌ Missing SendMessages permission in ${ch.id}`);
-    return false;
-  }
-  // EmbedLinks is not a blocker; Discord just won't show previews.
-
-  // Send each chunk with individual error handling to avoid cascading failures
-  let sentSomething = false;
-  for (const chunk of chunks) {
-    try {
-      await ch.send(chunk);
-      sentSomething = true;
-    } catch (e) {
-      console.error(`Failed sending message chunk: ${e.message}`);
+  for (let i = 0; i < urls.length; i += 5) {
+    const group = urls.slice(i, i + 5);
+    let groupMsg = '';
+    group.forEach(u => {
+      const low = u.toLowerCase();
+      const type = low.endsWith('.gif')
+        ? 'Gif'
+        : low.match(/\.(jpg|jpeg|png|webp)$/)
+          ? 'Pic'
+          : 'Media';
+      groupMsg += `[${type}](${u})\n\n`;
+    });
+    if (group.length) {
+      await ch.send(msg + groupMsg);
+      msg = '';
     }
   }
-  // Separator only if at least one chunk was sent
-  if (sentSomething) {
-    try {
-      await ch.send('═════════════════════════════════');
-    } catch (e) {
-      console.error(`Failed sending separator: ${e.message}`);
-    }
-  }
-  return sentSomething;
+  if (msg.trim()) await ch.send(msg);
+  await ch.send('═════════════════════════════════');
 };
 
-// ---------- PARSER ----------
-const parseRedditInfo = content => {
-  // Stricter subreddit extraction: requires the link format **r/sub](<<...>>)
-  const subMatch = content.match(/\*\*r\/(?:\[([^\]]+)\]|([\w_]+))\]\(/i);
-  let sub = subMatch ? (subMatch[1] || subMatch[2]) : 'unknown';
-  sub = sub.toLowerCase(); // Normalize to lowercase for consistent display and lookup
+const getPostInfo = content => {
+  const subMatch = content.match(/r\/([\w]+)/i);
+  const sub = subMatch ? subMatch[1] : 'unknown';
 
-  // Lazy capture of the title text up to the redd.it post link (handles nested brackets safely)
-  const titleMatch = content.match(/:\s*\[(.*?)\]\(<<https?:\/\/redd\.it\/[^>]+>>\)/i);
+  const titleMatch = content.match(/:\s*\[([^\]]+)\]/);
   const title = titleMatch ? titleMatch[1].trim() : 'Reddit Post';
 
-  // Allows underscores and hyphens in usernames
-  const authorMatch = content.match(/\*by\s+([\w_-]+)\*/i);
+  const authorMatch = content.match(/\*by\s+([\w-]+)\*/i);
   const author = authorMatch ? authorMatch[1] : 'unknown';
 
   return { title, subreddit: sub, author };
 };
 
-// sendLog with caching for the log channel; uses originalError to avoid recursion
 const sendLog = async (channelId, msg) => {
   try {
-    const channel = channelId === LOG_CHANNEL_ID
-      ? await getLogChannel()
-      : await client.channels.fetch(channelId);
-    if (channel) {
-      let output = suppressEmbeds(msg);
-      if (output.length > 1900) output = output.slice(0, 1900) + '...';
-      await channel.send(output);
-    }
+    const channel = await client.channels.fetch(channelId);
+    if (channel) await channel.send(suppressEmbeds(msg));
   } catch (e) {
     originalError('Log channel error:', e.message);
   }
 };
-
-// ---------- DUPLICATE MESSAGE CACHE (timestamp-based) ----------
-const processedMessages = new Map();
-
-const cleanupCache = () => {
-  const now = Date.now();
-  for (const [id, timestamp] of processedMessages) {
-    if (now - timestamp > CACHE_TTL_MS) {
-      processedMessages.delete(id);
-    }
-  }
-  // If still too large, remove oldest entries (preserve insertion order)
-  while (processedMessages.size > MAX_CACHE_SIZE) {
-    const first = processedMessages.keys().next().value;
-    processedMessages.delete(first);
-  }
-};
-
-const cacheCleanupTimer = setInterval(cleanupCache, CACHE_TTL_MS);
-cacheCleanupTimer.unref();
-
-// ---------- CACHE FOR REDIRECT CHANNELS ----------
-const redirectChannelCache = new Map();
 
 // ---------- BOT EVENTS ----------
 client.once('clientReady', () => {
@@ -296,17 +149,9 @@ client.once('clientReady', () => {
 });
 
 client.on('messageCreate', async msg => {
-  // Ignore bot's own messages and non-target bots
-  if (!client.user || msg.author.id === client.user.id || !TARGET_BOT_IDS.includes(msg.author.id)) return;
-  // Ignore DMs and non-text channels
-  if (!msg.guild || !msg.channel.isTextBased()) return;
+  if (msg.author.id === client.user.id || !TARGET_BOT_IDS.includes(msg.author.id)) return;
 
-  // Duplicate cache check
-  if (processedMessages.has(msg.id)) return;
-  processedMessages.set(msg.id, Date.now());
-
-  const channelName = msg.channel.name ?? msg.channel.id;
-  console.log(`\n📩 New message from ${msg.author.tag} in #${channelName}`);
+  console.log(`\n📩 New message from ${msg.author.tag} in #${msg.channel.name}`);
   console.log(`📝 Full content:\n${msg.content}`);
 
   await sendLog(
@@ -314,29 +159,20 @@ client.on('messageCreate', async msg => {
     `🔍 Processing message from **${msg.author.tag}** in <#${msg.channel.id}>\n📝 **Content:**\n${msg.content.slice(0, 500)}${msg.content.length > 500 ? '...' : ''}`
   );
 
-  // More selective URL regex to avoid capturing trailing punctuation/markdown
-  const urls = msg.content.match(/https?:\/\/[^\s<>")\]]+/gi);
+  const urls = msg.content.match(/https?:\/\/[^\s<>"]+/gi);
   if (!urls) {
     console.log(`ℹ️ No URLs found in message`);
     return;
   }
   console.log(`🔗 Found ${urls.length} raw URLs:`, urls);
 
-  const redditInfo = parseRedditInfo(msg.content);
-  console.log(`ℹ️ Reddit info - Title: "${redditInfo.title}", Sub: ${redditInfo.subreddit}, Author: ${redditInfo.author}`);
-
-  // Check permission to delete the original message
-  const canDelete = msg.channel.permissionsFor(client.user)?.has('ManageMessages');
-  if (!canDelete) {
-    console.error(`❌ Missing ManageMessages permission in ${msg.channel.id}, cannot delete`);
-    return;
-  }
+  const postInfo = getPostInfo(msg.content);
+  console.log(`ℹ️ Post info - Title: "${postInfo.title}", Sub: ${postInfo.subreddit}, Author: ${postInfo.author}`);
 
   let allowed = [],
     blocked = [],
     seen = new Set();
 
-  // Classify URLs using host‑based and extension checks
   console.log(`🔍 Classifying URLs...`);
   for (const u of urls) {
     const clean = cleanUrl(u);
@@ -344,17 +180,19 @@ client.on('messageCreate', async msg => {
       console.log(`   🔁 Duplicate (skipped): ${clean}`);
       continue;
     }
-
+    seen.add(clean);
     const low = clean.toLowerCase();
-    const isRedgifsMatch = isRedgifs(clean);
-    const isRedditNativeMatch = isRedditNative(clean);
-    const hasAllowedExt = ALLOWED_EXTS.some(ext => low.endsWith(ext));
-
-    if (isRedgifsMatch || isRedditNativeMatch || hasAllowedExt) {
+    if (
+      low.includes('x.com/') ||
+      low.includes('twitter.com/') ||
+      low.includes('redgifs.com') ||
+      low.includes('i.redd.it') ||
+      low.includes('v.redd.it') ||
+      ALLOWED_EXTS.some(ext => low.includes(ext) || low.endsWith(ext))
+    ) {
       allowed.push(clean);
-      seen.add(clean);
       console.log(`   ✅ Allowed: ${clean}`);
-      if (isRedgifsMatch) console.log(`     ↳ (Redgifs)`);
+      if (low.includes('redgifs.com')) console.log(`     ↳ (Redgifs)`);
     } else {
       blocked.push(clean);
       console.log(`   ❌ Blocked: ${clean}`);
@@ -363,14 +201,16 @@ client.on('messageCreate', async msg => {
 
   let allAllowed = [...allowed];
 
-  // Prioritize Reddit native media, but keep Redgifs as well
-  const hasRedditNative = allAllowed.some(url => isRedditNative(url));
+  // Prioritize Reddit native media
+  const hasRedditNative = allAllowed.some(url =>
+    REDDIT_NATIVE_DOMAINS.some(domain => url.includes(domain))
+  );
   if (hasRedditNative) {
-    console.log(`🎯 Reddit native media detected, filtering out other external (keeping Redgifs)...`);
+    console.log(`🎯 Reddit native media detected, filtering out external...`);
     allAllowed = allAllowed.filter(url =>
-      isRedditNative(url) || isRedgifs(url)
+      REDDIT_NATIVE_DOMAINS.some(domain => url.includes(domain))
     );
-    console.log(`   ↳ Remaining URLs:`, allAllowed);
+    console.log(`   ↳ Remaining native URLs:`, allAllowed);
   }
 
   console.log(`📊 Final allowed URLs (${allAllowed.length}):`, allAllowed);
@@ -378,74 +218,49 @@ client.on('messageCreate', async msg => {
 
   await sendLog(
     LOG_CHANNEL_ID,
-    `🔎 **Analysis:**\n• From: **${msg.author.tag}**\n• Title: ${redditInfo.title}\n• Subreddit: r/${redditInfo.subreddit}\n• URLs: ${urls.length} total, ${allAllowed.length} allowed, ${blocked.length} blocked`
+    `🔎 **Analysis:**\n• From: **${msg.author.tag}**\n• Title: ${postInfo.title}\n• Subreddit: r/${postInfo.subreddit}\n• URLs: ${urls.length} total, ${allAllowed.length} allowed, ${blocked.length} blocked`
   );
 
   if (allAllowed.length === 0 && blocked.length) {
     console.log(`🗑️ No allowed URLs, deleting original message`);
-    try {
-      await msg.delete();
-    } catch (e) {
-      console.error(`Failed to delete message: ${e.message}`);
-    }
-    return;
+    return msg.delete();
   }
 
   if (allAllowed.length) {
     try {
       console.log(`🗑️ Deleting original message...`);
-      try {
-        await msg.delete();
-        console.log(`✅ Original message deleted`);
-      } catch (e) {
-        console.error(`Delete failed: ${e.message}`);
-        // If we cannot delete, we should not repost to avoid duplication
-        return;
-      }
+      await msg.delete();
+      console.log(`✅ Original message deleted`);
 
-      // ---------- REDIRECTION LOGIC (O(1) reverse lookup, with channel cache) ----------
+      // ---------- REDIRECTION LOGIC ----------
       let targetChannel = msg.channel;
-      const subForRedirect = redditInfo.subreddit.toLowerCase();
-      const channelId = SUBREDDIT_CHANNEL_LOOKUP[subForRedirect];
-
-      if (channelId) {
+      const subForRedirect = postInfo.subreddit.toLowerCase();
+      if (SUBREDDIT_CHANNEL_MAP[subForRedirect]) {
         try {
-          // Use cached channel if available
-          if (!redirectChannelCache.has(channelId)) {
-            const fetched = await client.channels.fetch(channelId);
-            if (fetched && fetched.isTextBased()) {
-              redirectChannelCache.set(channelId, fetched);
-            } else {
-              console.error(`❌ Invalid target channel ${channelId}, falling back to original`);
-            }
-          }
-          const cached = redirectChannelCache.get(channelId);
-          if (cached) {
-            targetChannel = cached;
+          const channelId = SUBREDDIT_CHANNEL_MAP[subForRedirect];
+          targetChannel = await client.channels.fetch(channelId);
+          if (!targetChannel) {
+            console.error(`❌ Could not fetch channel ${channelId}, falling back to original`);
+            targetChannel = msg.channel;
+          } else {
             console.log(`🔄 Redirecting to channel #${targetChannel.name} (${channelId}) for subreddit r/${subForRedirect}`);
             await sendLog(LOG_CHANNEL_ID, `🔄 Redirected to <#${channelId}> because of subreddit r/${subForRedirect}`);
           }
         } catch (e) {
           console.error(`❌ Error fetching redirect channel: ${e.message}, falling back to original`);
-          // Remove from cache if fetch failed
-          redirectChannelCache.delete(channelId);
+          targetChannel = msg.channel;
         }
       }
 
       console.log(`📤 Sending cleaned message to ${targetChannel.id}...`);
-      const sent = await formatMessage(
+      await formatMessage(
         targetChannel,
-        redditInfo.title,
-        redditInfo.subreddit,
-        redditInfo.author,
+        postInfo.title,
+        postInfo.subreddit,
+        postInfo.author,
         allAllowed
       );
-
-      if (sent) {
-        console.log(`✅ Cleaned message sent`);
-      } else {
-        console.error(`❌ Failed to send cleaned message`);
-      }
+      console.log(`✅ Cleaned message sent`);
 
       await sleep(2000);
       await sendLog(
