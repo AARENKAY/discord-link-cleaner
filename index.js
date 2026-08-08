@@ -128,10 +128,10 @@ const formatMessage = async (ch, title, sub, author, urls) => {
 };
 
 const fallbackInfo = content => {
-  const subMatch = content.match(/r\/([\w]+)/i);
+  const subMatch = content.match(/r\/\[([^\]]+)\]/i);
   const sub = subMatch ? subMatch[1] : 'unknown';
 
-  const titleMatch = content.match(/:\s*\[([^\]]+)\]/);
+  const titleMatch = content.match(/:\s*\[\[?(.*?)\]\]\(/);
   const title = titleMatch ? titleMatch[1].trim() : 'Reddit Post';
 
   const authorMatch = content.match(/\*by\s+([\w-]+)\*/i);
