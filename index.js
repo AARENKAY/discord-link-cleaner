@@ -300,7 +300,7 @@ client.on('messageCreate', async msg => {
   let reply = '🔁 Converted Twitter/X tweet';
   if (unique.length > 1) reply += 's';
   reply += ':\n';
-  unique.forEach(u => { reply += `<${u}>\n`; });
+  unique.forEach(u => { reply += `${u}\n`; });
 
   try {
     // Reply to the original message (keeps it intact)
