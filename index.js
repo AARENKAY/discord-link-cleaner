@@ -297,10 +297,8 @@ client.on('messageCreate', async msg => {
   const unique = [...new Set(converted)];
 
   // Build a reply message
-  let reply = '🔁 Converted Twitter/X tweet';
-  if (unique.length > 1) reply += 's';
-  reply += ':\n';
-  unique.forEach(u => { reply += `${u}\n`; });
+  const lines = unique.map(u => `🔁 [Converted:](${u})`);
+  const reply = lines.join('\n');
 
   try {
     // Reply to the original message (keeps it intact)
