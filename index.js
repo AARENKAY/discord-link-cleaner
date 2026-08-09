@@ -297,7 +297,7 @@ client.on('messageCreate', async msg => {
   const unique = [...new Set(converted)];
 
   // Build a reply message
-  const lines = unique.map(u => `🔁 [Converted:](${u})`);
+  const lines = unique.map(u => `🔁[:](${u})`);
   const reply = lines.join('\n');
 
   try {
