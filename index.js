@@ -91,38 +91,54 @@ const cleanUrl = url => {
   return c.split('?')[0].replace(/\/+$/, '');
 };
 
-const formatMessage = async (ch, title, sub, author, urls) => {
-  let msg = `## ${title}\n\n*Posted in* **r/${sub}** *by* **${author}**\n\n`;
-  if (urls.length > 1) msg += `**Media:** ${urls.length}\n\n`;
-  for (let i = 0; i < urls.length; i += 5) {
-    const group = urls.slice(i, i + 5);
-    let groupMsg = '';
-    group.forEach(u => {
-      const low = u.toLowerCase();
-      const type = low.endsWith('.gif')
-        ? 'Gif'
-        : low.match(/\.(mp4|webm|gifv)$/)
-          ? 'Video'
-          : 'Media';
-      groupMsg += `[${type}](${u})\n\n`;
-    });
-    if (group.length) {
-      await ch.send(msg + groupMsg);
-      msg = '';
-    }
+const formatMessage = async (ch, postInfo, urls) => {
+  const { title, subreddit, author, subredditLink, postLink } = postInfo;
+
+  // Title as a clickable link (wrapped in < > to prevent embed)
+  let msg = `## [${title}](<${postLink}>)\n`;
+  // Subreddit as clickable link, author plain text
+  msg += `*Posted in* **[r/${subreddit}](<${subredditLink}>)** *by* **${author}**\n`;
+
+  // Each media URL as a bullet point (no labels)
+  for (const url of urls) {
+    msg += `[•](${url})\n`;
   }
-  if (msg.trim()) await ch.send(msg);
+
+  // Send in chunks if needed (Discord limit ~2000 chars per message)
+  if (msg.length > 1900) {
+    // Split into multiple messages if too long
+    const chunks = msg.match(/[\s\S]{1,1900}/g) || [];
+    for (const chunk of chunks) {
+      await ch.send(chunk);
+    }
+  } else {
+    await ch.send(msg);
+  }
   await ch.send('═════════════════════════════════');
 };
 
 const getPostInfo = content => {
-  const subMatch = content.match(/r\/([\w]+)/i);
+  // Extract subreddit name from r/[Subreddit]
+  const subMatch = content.match(/r\/\[([^\]]+)\]/i);
   const sub = subMatch ? subMatch[1] : 'unknown';
-  const titleMatch = content.match(/:\s*\[([^\]]+)\]/);
+  
+  // Extract subreddit link from <<https://reddit.com/r/Subreddit>>
+  const subLinkMatch = content.match(/r\/\[[^\]]+\]\(<<([^>]+)>>\)/i);
+  const subredditLink = subLinkMatch ? subLinkMatch[1] : null;
+  
+  // Extract post link from the title link: [Title](<<https://redd.it/...>>)
+  const postLinkMatch = content.match(/:\s*\[[^\]]*\]\(<<([^>]+)>>\)/);
+  const postLink = postLinkMatch ? postLinkMatch[1] : null;
+  
+  // Extract title (can have nested brackets)
+  const titleMatch = content.match(/:\s*\[(.*)\]\(<<[^>]+>>\)/);
   const title = titleMatch ? titleMatch[1].trim() : 'Reddit Post';
+  
+  // Extract author
   const authorMatch = content.match(/\*by\s+([\w-]+)\*/i);
   const author = authorMatch ? authorMatch[1] : 'unknown';
-  return { title, subreddit: sub, author };
+  
+  return { title, subreddit: sub, author, subredditLink, postLink };
 };
 
 const sendLog = async (channelId, msg) => {
@@ -249,9 +265,7 @@ client.on('messageCreate', async msg => {
         console.log(`📤 Sending cleaned message to ${targetChannel.id}...`);
         await formatMessage(
           targetChannel,
-          postInfo.title,
-          postInfo.subreddit,
-          postInfo.author,
+          postInfo,
           allAllowed
         );
         console.log(`✅ Cleaned message sent`);
@@ -296,7 +310,7 @@ client.on('messageCreate', async msg => {
   // Remove duplicates
   const unique = [...new Set(converted)];
 
-  // Build a reply message
+  // Build a reply message – each link as a bullet point with embed
   const lines = unique.map(u => `[•](${u})`);
   const reply = lines.join('\n');
 
