@@ -89,7 +89,7 @@ const formatMessage = async (ch, postInfo, urls) => {
   const { title, subreddit, author, subredditLink, postLink } = postInfo;
 
   // Title as a clickable link (wrapped in < > to prevent embed)
-  let msg = `## [${title}](<${postLink || '#'}>)\n`;
+  let msg = `# [${title}](<${postLink || '#'}>)\n`;
   // Subreddit as clickable link, author plain text
   msg += `*Posted in* **[r/${subreddit}](<${subredditLink || '#'}>)** *by* **${author}**\n`;
 
