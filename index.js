@@ -89,9 +89,9 @@ const formatMessage = async (ch, postInfo, urls) => {
   const { title, subreddit, author, subredditLink, postLink } = postInfo;
 
   // Title as a clickable link (wrapped in < > to prevent embed)
-  let msg = `## [${title}](<${postLink}>)\n`;
+  let msg = `## [${title}](<${postLink || '#'}>)\n`;
   // Subreddit as clickable link, author plain text
-  msg += `*Posted in* **[r/${subreddit}](<${subredditLink}>)** *by* **${author}**\n`;
+  msg += `*Posted in* **[r/${subreddit}](<${subredditLink || '#'}>)** *by* **${author}**\n`;
 
   // Each media URL as a bullet point (no labels)
   for (const url of urls) {
@@ -111,27 +111,46 @@ const formatMessage = async (ch, postInfo, urls) => {
   await ch.send('═════════════════════════════════');
 };
 
+// Improved getPostInfo using string extraction for links
 const getPostInfo = content => {
   // Extract subreddit name from r/[Subreddit]
   const subMatch = content.match(/r\/\[([^\]]+)\]/i);
   const sub = subMatch ? subMatch[1] : 'unknown';
-  
-  // Extract subreddit link from <<https://reddit.com/r/Subreddit>>
-  const subLinkMatch = content.match(/r\/\[[^\]]+\]\(<<([^>]+)>>\)/i);
-  const subredditLink = subLinkMatch ? subLinkMatch[1] : null;
-  
-  // Extract post link from the title link: [Title](<<https://redd.it/...>>)
-  const postLinkMatch = content.match(/:\s*\[[^\]]*\]\(<<([^>]+)>>\)/);
-  const postLink = postLinkMatch ? postLinkMatch[1] : null;
-  
-  // Extract title (can have nested brackets)
-  const titleMatch = content.match(/:\s*\[(.*)\]\(<<[^>]+>>\)/);
+
+  // Extract subreddit link: find "(<<" and the next ">>)" after the subreddit part
+  let subredditLink = null;
+  const subStart = content.indexOf('r/[');
+  if (subStart !== -1) {
+    const openParen = content.indexOf('(<<', subStart);
+    if (openParen !== -1) {
+      const closeParen = content.indexOf('>>)', openParen + 3);
+      if (closeParen !== -1) {
+        subredditLink = content.substring(openParen + 3, closeParen);
+      }
+    }
+  }
+
+  // Extract post link: find ":" then "(<<" and the next ">>)"
+  let postLink = null;
+  const colonIndex = content.indexOf(': ');
+  if (colonIndex !== -1) {
+    const openParen = content.indexOf('(<<', colonIndex);
+    if (openParen !== -1) {
+      const closeParen = content.indexOf('>>)', openParen + 3);
+      if (closeParen !== -1) {
+        postLink = content.substring(openParen + 3, closeParen);
+      }
+    }
+  }
+
+  // Extract title (between ": [" and "](<<")
+  const titleMatch = content.match(/:\s*\[(.*?)\]\(<</);
   const title = titleMatch ? titleMatch[1].trim() : 'Reddit Post';
-  
+
   // Extract author
   const authorMatch = content.match(/\*by\s+([\w-]+)\*/i);
   const author = authorMatch ? authorMatch[1] : 'unknown';
-  
+
   return { title, subreddit: sub, author, subredditLink, postLink };
 };
 
