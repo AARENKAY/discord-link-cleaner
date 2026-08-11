@@ -91,7 +91,7 @@ const formatMessage = async (ch, postInfo, urls) => {
   // Title as a clickable link (wrapped in < > to prevent embed)
   let msg = `# [${title}](<${postLink || '#'}>)\n`;
   // Subreddit as clickable link, author plain text
-  msg += `*Posted in* **[r/${subreddit}](<${subredditLink || '#'}>)** *by* **${author}**\n`;
+  msg += `*Posted in:* **[r/${subreddit}](<${subredditLink || '#'}>)**   *By:* **${author}**\n`;
 
   // Each media URL as a bullet point (no labels)
   for (const url of urls) {
