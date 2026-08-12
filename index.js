@@ -86,7 +86,7 @@ const formatMessage = async (ch, postInfo, urls) => {
   const { title, subreddit, author, subredditLink, postLink } = postInfo;
 
   let msg = `## [${title}](<${postLink || '#'}>)\n`;
-  msg += `*Posted in* **[r/${subreddit}](<${subredditLink || '#'}>)** *by* **${author}**\n`;
+  msg += `*Posted in:*  **[r/${subreddit}](<${subredditLink || '#'}>)**   *By:*  **${author}**\n`;
 
   for (const url of urls) {
     msg += `[•](${url})\n`;
