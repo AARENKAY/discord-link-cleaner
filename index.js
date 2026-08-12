@@ -34,7 +34,6 @@ const SUBREDDIT_CHANNEL_MAP = {
 };
 
 const TARGET_BOT_IDS = ['1531274702067073157'];
-// Only GIFs and videos – no images
 const ALLOWED_EXTS = ['.mp4', '.gif', '.gifv', '.webm'];
 const LOG_CHANNEL_ID = '1530804280720887918';
 const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it'];
@@ -73,7 +72,6 @@ console.error = (...args) => {
 };
 
 // ---------- HELPERS ----------
-// Only cleans Reddit-related URLs (preview.redd.it, redgifs.com) and strips query strings
 const cleanUrl = url => {
   if (!url) return url;
   let c = url.replace('www.redgifs.com', 'redgifs.com');
@@ -81,26 +79,20 @@ const cleanUrl = url => {
     const m = c.match(/preview\.redd\.it\/([^?]+)/);
     if (m) c = `https://i.redd.it/${m[1].split('?')[0]}`;
   }
-  // Query string and trailing slashes removed
   return c.split('?')[0].replace(/\/+$/, '');
 };
 
 const formatMessage = async (ch, postInfo, urls) => {
   const { title, subreddit, author, subredditLink, postLink } = postInfo;
 
-  // Title as a clickable link (wrapped in < > to prevent embed)
-  let msg = `# [${title}](<${postLink || '#'}>)\n`;
-  // Subreddit as clickable link, author plain text
-  msg += `*Posted in:*  **[r/${subreddit}](<${subredditLink || '#'}>)**   *By:*  **${author}**\n`;
+  let msg = `## [${title}](<${postLink || '#'}>)\n`;
+  msg += `*Posted in* **[r/${subreddit}](<${subredditLink || '#'}>)** *by* **${author}**\n`;
 
-  // Each media URL as a bullet point (no labels)
   for (const url of urls) {
     msg += `[•](${url})\n`;
   }
 
-  // Send in chunks if needed (Discord limit ~2000 chars per message)
   if (msg.length > 1900) {
-    // Split into multiple messages if too long
     const chunks = msg.match(/[\s\S]{1,1900}/g) || [];
     for (const chunk of chunks) {
       await ch.send(chunk);
@@ -111,49 +103,26 @@ const formatMessage = async (ch, postInfo, urls) => {
   await ch.send('═════════════════════════════════');
 };
 
+// NEW PARSER – robust to timestamps and nested brackets
 const getPostInfo = content => {
-  // Extract subreddit name from r/[Subreddit]
-  const subMatch = content.match(/r\/\[([^\]]+)\]/i);
-  const sub = subMatch ? subMatch[1] : 'unknown';
+  // Subreddit and its link
+  const subredditMatch = content.match(/r\/\[([^\]]+)\]\(<<([^>]+)>>\)/i);
+  const subreddit = subredditMatch ? subredditMatch[1] : 'unknown';
+  const subredditLink = subredditMatch ? subredditMatch[2] : null;
 
-  // Extract subreddit link: find "(<<" and the next ">>)" after the subreddit part
-  let subredditLink = null;
-  const subStart = content.indexOf('r/[');
-  if (subStart !== -1) {
-    const openParen = content.indexOf('(<<', subStart);
-    if (openParen !== -1) {
-      const closeParen = content.indexOf('>>)', openParen + 3);
-      if (closeParen !== -1) {
-        subredditLink = content.substring(openParen + 3, closeParen);
-      }
-    }
-  }
+  // Title and post link
+  const postMatch = content.match(/:\s*\[([\s\S]*?)\]\(<<([^>]+)>>\)/);
+  let title = postMatch ? postMatch[1].trim() : 'Reddit Post';
+  const postLink = postMatch ? postMatch[2] : null;
 
-  // Extract post link: find ":" then "(<<" and the next ">>)"
-  let postLink = null;
-  const colonIndex = content.indexOf(': ');
-  if (colonIndex !== -1) {
-    const openParen = content.indexOf('(<<', colonIndex);
-    if (openParen !== -1) {
-      const closeParen = content.indexOf('>>)', openParen + 3);
-      if (closeParen !== -1) {
-        postLink = content.substring(openParen + 3, closeParen);
-      }
-    }
-  }
-
-  // Extract title (between ": [" and "](<<")
-  const titleMatch = content.match(/:\s*\[(.*?)\]\(<</);
-  let title = titleMatch ? titleMatch[1].trim() : 'Reddit Post';
-  
-  // Remove emojis from title
+  // Remove emojis
   title = title.replace(/[\u{1F600}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FEFF}\u{1F000}-\u{1F02F}\u{1F0A0}-\u{1F0FF}\u{1F100}-\u{1F1FF}\u{1F200}-\u{1F2FF}\u{1F300}-\u{1F5FF}]/gu, '').trim();
 
-  // Extract author
-  const authorMatch = content.match(/\*by\s+([\w-]+)\*/i);
-  const author = authorMatch ? authorMatch[1] : 'unknown';
+  // Author
+  const authorMatch = content.match(/\*by\s+([^*]+)\*/i);
+  const author = authorMatch ? authorMatch[1].trim() : 'unknown';
 
-  return { title, subreddit: sub, author, subredditLink, postLink };
+  return { title, subreddit, author, subredditLink, postLink };
 };
 
 const sendLog = async (channelId, msg) => {
@@ -175,10 +144,8 @@ client.once('clientReady', () => {
 });
 
 client.on('messageCreate', async msg => {
-  // Ignore own messages
   if (msg.author.id === client.user.id) return;
 
-  // ---- 1. TARGET BOT: full Reddit link processing ----
   if (TARGET_BOT_IDS.includes(msg.author.id)) {
     console.log(`\n📩 New message from ${msg.author.tag} in #${msg.channel.name}`);
     console.log(`📝 Full content:\n${msg.content}`);
@@ -198,11 +165,8 @@ client.on('messageCreate', async msg => {
     const postInfo = getPostInfo(msg.content);
     console.log(`ℹ️ Post info - Title: "${postInfo.title}", Sub: ${postInfo.subreddit}, Author: ${postInfo.author}`);
 
-    let allowed = [],
-      blocked = [],
-      seen = new Set();
+    let allowed = [], blocked = [], seen = new Set();
 
-    console.log(`🔍 Classifying URLs...`);
     for (const u of urls) {
       const clean = cleanUrl(u);
       if (seen.has(clean)) {
@@ -227,7 +191,6 @@ client.on('messageCreate', async msg => {
 
     let allAllowed = [...allowed];
 
-    // Prioritize Reddit native media
     const hasRedditNative = allAllowed.some(url =>
       REDDIT_NATIVE_DOMAINS.some(domain => url.includes(domain))
     );
@@ -278,11 +241,7 @@ client.on('messageCreate', async msg => {
         }
 
         console.log(`📤 Sending cleaned message to ${targetChannel.id}...`);
-        await formatMessage(
-          targetChannel,
-          postInfo,
-          allAllowed
-        );
+        await formatMessage(targetChannel, postInfo, allAllowed);
         console.log(`✅ Cleaned message sent`);
 
         await sleep(2000);
@@ -296,11 +255,10 @@ client.on('messageCreate', async msg => {
         await sendLog(LOG_CHANNEL_ID, `❌ **Error:** ${e.message}\n• From: **${msg.author.tag}**`);
       }
     }
-    return; // done with target bot
+    return;
   }
 
-  // ---- 2. EVERYONE ELSE: Twitter/X tweet conversion (keep original) ----
-  // Skip if message already contains any known conversion domain
+  // Twitter conversion (unchanged)
   if (
     msg.content.includes('fixupx.com') ||
     msg.content.includes('fxtwitter.com') ||
@@ -310,27 +268,22 @@ client.on('messageCreate', async msg => {
   const urls = msg.content.match(/https?:\/\/[^\s<>"]+/gi);
   if (!urls) return;
 
-  // Filter only Twitter/X links that are tweet URLs (contain /status/)
   const twitterUrls = urls.filter(u => /x\.com|twitter\.com/i.test(u) && /\/status\//i.test(u));
   if (twitterUrls.length === 0) return;
 
   console.log(`\n🐦 Tweet link from ${msg.author.tag} in #${msg.channel.name}`);
   console.log(`Original: ${msg.content}`);
 
-  // Convert the tweet URLs: replace domain with fixupx.com and strip query/trailing slash
   const converted = twitterUrls.map(u => {
     let c = u.replace(/https?:\/\/(www\.)?(x\.com|twitter\.com)/i, 'https://fixupx.com');
     return c.split('?')[0].replace(/\/+$/, '');
   });
-  // Remove duplicates
   const unique = [...new Set(converted)];
 
-  // Build a reply message – each link as a bullet point with embed
   const lines = unique.map(u => `[•](${u})`);
   const reply = lines.join('\n');
 
   try {
-    // Reply to the original message (keeps it intact)
     await msg.reply(reply);
     console.log(`✅ Replied with: ${unique.join(', ')}`);
     await sendLog(LOG_CHANNEL_ID, `🐦 Converted tweet for **${msg.author.tag}**: ${unique.join(', ')}`);
