@@ -104,38 +104,62 @@ const formatMessage = async (ch, postInfo, urls) => {
 
 // ---------- FIXED getPostInfo – robust to nested brackets ----------
 const getPostInfo = content => {
-  // Subreddit
-  const subredditMatch = content.match(/r\/\[([^\]]+)\]\(<<([^>]+)>>\)/i);
-  const subreddit = subredditMatch ? subredditMatch[1] : 'unknown';
-  const subredditLink = subredditMatch ? subredditMatch[2] : null;
-
-  // Author
-  const authorMatch = content.match(/\*by\s+([^*]+)\*/i);
-  const author = authorMatch ? authorMatch[1].trim() : 'unknown';
-
   let title = 'Reddit Post';
+  let subreddit = 'unknown';
+  let author = 'unknown';
+  let subredditLink = '#';
   let postLink = '#';
 
-  // Split at the subreddit link's closing `>>):` to isolate the post part
-  const parts = content.split(/>>\):\s*/);
-  if (parts.length >= 2) {
-    const titleLinkPart = parts[1]; // e.g. "[Long thick bath shit turning me on [F]](<<https://redd.it/1vn0odn>>)"
+  // Extract subreddit and subreddit link
+  const subredditMatch = content.match(
+    /r\/\[([^\]]+)\]\(<<([^>]+)>>\)/i
+  );
 
-    // Extract the post link
-    const linkMatch = titleLinkPart.match(/\(<<([^>]+)>>\)/);
-    if (linkMatch) postLink = linkMatch[1];
+  if (subredditMatch) {
+    subreddit = subredditMatch[1].trim();
+    subredditLink = subredditMatch[2].trim();
+  }
 
-    // Find the `](<<` that precedes the link and extract the title
-    const linkStart = titleLinkPart.indexOf('](<<');
-    if (linkStart !== -1 && titleLinkPart.startsWith('[')) {
-      title = titleLinkPart.substring(1, linkStart); // removes outer `[` and the `]` before the link
+  // Extract title and post link safely
+  // Works with titles containing brackets like:
+  // [F] Title
+  // Title [F]
+  // Title [A] [B]
+  const afterSubreddit = content.split('>>):')[1];
+
+  if (afterSubreddit) {
+    const postMatch = afterSubreddit.match(
+      /\[([\s\S]*)\]\(<<([^>]+)>>\)/i
+    );
+
+    if (postMatch) {
+      title = postMatch[1].trim();
+      postLink = postMatch[2].trim();
     }
   }
 
-  // Remove emojis
-  title = title.replace(/[\u{1F600}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FEFF}\u{1F000}-\u{1F02F}\u{1F0A0}-\u{1F0FF}\u{1F100}-\u{1F1FF}\u{1F200}-\u{1F2FF}\u{1F300}-\u{1F5FF}]/gu, '').trim();
+  // Extract author
+  const authorMatch = content.match(
+    /\*by\s+([^*\s·]+)/i
+  );
 
-  return { title, subreddit, author, subredditLink, postLink };
+  if (authorMatch) {
+    author = authorMatch[1].trim();
+  }
+
+  // Remove emojis and emoji-related symbols
+  title = title.replace(
+    /[\u{1F600}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FEFF}]/gu,
+    ''
+  ).trim();
+
+  return {
+    title,
+    subreddit,
+    author,
+    subredditLink,
+    postLink
+  };
 };
 
 const sendLog = async (channelId, msg) => {
