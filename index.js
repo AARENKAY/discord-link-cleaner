@@ -113,7 +113,7 @@ const getPostInfo = content => {
 
   // Extract subreddit name
   const subredditMatch = content.match(
-    /r\/\[?([\w]+)\]?/i
+    /r\/\[([^\]]+)\]/i
   );
 
   if (subredditMatch) {
@@ -122,7 +122,7 @@ const getPostInfo = content => {
 
   // Extract subreddit link
   const subredditLinkMatch = content.match(
-    /r\/\[?[^\]]+\]?\(<<([^>]+)>>\)/i
+    /r\/\[[^\]]+\]\(<([^>]+)>\)/i
   );
 
   if (subredditLinkMatch) {
@@ -130,27 +130,13 @@ const getPostInfo = content => {
   }
 
   // Extract title and post link
-  const afterSubreddit = content.split('>>):')[1];
+  const postMatch = content.match(
+    /:\s*\[([\s\S]*?)\]\(<([^>]+)>\)/i
+  );
 
-  if (afterSubreddit) {
-
-    // Title inside [ ]
-    const titleMatch = afterSubreddit.match(
-      /\[([\s\S]*)\]\(<<[^>]+>>\)/i
-    );
-
-    if (titleMatch) {
-      title = titleMatch[1].trim();
-    }
-
-    // Post link
-    const postLinkMatch = afterSubreddit.match(
-      /\[.*\]\(<<([^>]+)>>\)/i
-    );
-
-    if (postLinkMatch) {
-      postLink = postLinkMatch[1].trim();
-    }
+  if (postMatch) {
+    title = postMatch[1].trim();
+    postLink = postMatch[2].trim();
   }
 
   // Extract author
@@ -162,7 +148,7 @@ const getPostInfo = content => {
     author = authorMatch[1].trim();
   }
 
-  // Remove emojis and emoji-related symbols
+  // Remove emojis
   title = title.replace(
     /[\u{1F600}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FEFF}]/gu,
     ''
