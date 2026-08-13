@@ -218,7 +218,7 @@ client.on('messageCreate', async msg => {
   if (TARGET_BOT_IDS.includes(msg.author.id)) {
     console.log(`\n📩 New message from *${msg.author.tag}* in <#${msg.channel.id}>\n📝 **Content:**\n${msg.content.slice(0, 500)}${msg.content.length > 500 ? '...' : ''}`);
 
-    console.log(`🔍 Processing message from *${msg.author.tag}* in <#${msg.channel.id}>`);
+    console.log(`⚙️ Processing message from *${msg.author.tag}* in <#${msg.channel.id}>`);
     
     const urls = msg.content.match(/https?:\/\/[^\s<>"]+/gi);
     if (!urls) {
@@ -270,9 +270,7 @@ client.on('messageCreate', async msg => {
     console.log(`📊 Final allowed URLs (${allAllowed.length}):`, allAllowed);
     console.log(`🚫 Blocked URLs (${blocked.length}):`, blocked);
 
-    await sendLog(
-      LOG_CHANNEL_ID,
-      `🔎 **Analysis:**\n• From: **${msg.author.tag}**\n• Title: ${postInfo.title}\n• Subreddit: r/${postInfo.subreddit}\n• URLs: ${urls.length} total, ${allAllowed.length} allowed, ${blocked.length} blocked`
+    console.log(`🔎 **Analysis:**\n• From: **${msg.author.tag}**\n• Title: ${postInfo.title}\n• Subreddit: r/${postInfo.subreddit}\n• URLs: ${urls.length} total, ${allAllowed.length} allowed, ${blocked.length} blocked`
     );
 
     if (allAllowed.length === 0 && blocked.length) {
