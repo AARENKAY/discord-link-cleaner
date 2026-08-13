@@ -29,7 +29,6 @@ app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Health server on port ${PORT
 
 // ---------- CONFIG ----------
 const SUBREDDIT_CHANNEL_MAP = {
-  realscatgirls: '1466301671301714012',
   scatporn2: '1466301671301714012'
 };
 
@@ -103,24 +102,38 @@ const formatMessage = async (ch, postInfo, urls) => {
   await ch.send('═════════════════════════════════');
 };
 
-// NEW PARSER – robust to timestamps and nested brackets
+// ---------- FIXED getPostInfo – robust to nested brackets ----------
 const getPostInfo = content => {
-  // Subreddit and its link
+  // Subreddit
   const subredditMatch = content.match(/r\/\[([^\]]+)\]\(<<([^>]+)>>\)/i);
   const subreddit = subredditMatch ? subredditMatch[1] : 'unknown';
   const subredditLink = subredditMatch ? subredditMatch[2] : null;
 
-  // Title and post link
-  const postMatch = content.match(/:\s*\[([\s\S]*?)\]\(<<([^>]+)>>\)/);
-  let title = postMatch ? postMatch[1].trim() : 'Reddit Post';
-  const postLink = postMatch ? postMatch[2] : null;
-
-  // Remove emojis
-  title = title.replace(/[\u{1F600}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FEFF}\u{1F000}-\u{1F02F}\u{1F0A0}-\u{1F0FF}\u{1F100}-\u{1F1FF}\u{1F200}-\u{1F2FF}\u{1F300}-\u{1F5FF}]/gu, '').trim();
-
   // Author
   const authorMatch = content.match(/\*by\s+([^*]+)\*/i);
   const author = authorMatch ? authorMatch[1].trim() : 'unknown';
+
+  let title = 'Reddit Post';
+  let postLink = '#';
+
+  // Split at the subreddit link's closing `>>):` to isolate the post part
+  const parts = content.split(/>>\):\s*/);
+  if (parts.length >= 2) {
+    const titleLinkPart = parts[1]; // e.g. "[Long thick bath shit turning me on [F]](<<https://redd.it/1vn0odn>>)"
+
+    // Extract the post link
+    const linkMatch = titleLinkPart.match(/\(<<([^>]+)>>\)/);
+    if (linkMatch) postLink = linkMatch[1];
+
+    // Find the `](<<` that precedes the link and extract the title
+    const linkStart = titleLinkPart.indexOf('](<<');
+    if (linkStart !== -1 && titleLinkPart.startsWith('[')) {
+      title = titleLinkPart.substring(1, linkStart); // removes outer `[` and the `]` before the link
+    }
+  }
+
+  // Remove emojis
+  title = title.replace(/[\u{1F600}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FEFF}\u{1F000}-\u{1F02F}\u{1F0A0}-\u{1F0FF}\u{1F100}-\u{1F1FF}\u{1F200}-\u{1F2FF}\u{1F300}-\u{1F5FF}]/gu, '').trim();
 
   return { title, subreddit, author, subredditLink, postLink };
 };
@@ -226,17 +239,20 @@ client.on('messageCreate', async msg => {
         if (SUBREDDIT_CHANNEL_MAP[subForRedirect]) {
           try {
             const channelId = SUBREDDIT_CHANNEL_MAP[subForRedirect];
-            targetChannel = await client.channels.fetch(channelId);
-            if (!targetChannel) {
-              console.error(`❌ Could not fetch channel ${channelId}, falling back to original`);
-              targetChannel = msg.channel;
+            // --- FIXED FETCH WITH BETTER ERROR LOGGING ---
+            const fetchedChannel = await client.channels.fetch(channelId, { force: true });
+            if (!fetchedChannel) {
+              console.error(`❌ Channel ${channelId} not found (null), falling back to original`);
             } else {
+              targetChannel = fetchedChannel;
               console.log(`🔄 Redirecting to channel #${targetChannel.name} (${channelId}) for subreddit r/${subForRedirect}`);
               await sendLog(LOG_CHANNEL_ID, `🔄 Redirected to <#${channelId}> because of subreddit r/${subForRedirect}`);
             }
           } catch (e) {
-            console.error(`❌ Error fetching redirect channel: ${e.message}, falling back to original`);
-            targetChannel = msg.channel;
+            // --- LOG THE EXACT DISCORD ERROR CODE ---
+            console.error(`❌ Redirect fetch failed. Code: ${e.code} - ${e.message}`);
+            await sendLog(LOG_CHANNEL_ID, `⚠️ Redirect fetch failed (${e.code}): ${e.message}. Falling back to original channel.`);
+            // keep targetChannel = msg.channel (already set)
           }
         }
 
