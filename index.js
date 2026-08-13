@@ -218,11 +218,8 @@ client.on('messageCreate', async msg => {
   if (TARGET_BOT_IDS.includes(msg.author.id)) {
     console.log(`\n📩 New message from *${msg.author.tag}* in <#${msg.channel.id}>\n📝 **Content:**\n${msg.content.slice(0, 500)}${msg.content.length > 500 ? '...' : ''}`);
 
-    await sendLog(
-      LOG_CHANNEL_ID,
-      `🔍 Processing message from *${msg.author.tag}* in <#${msg.channel.id}>\n📝 **Content:**\n${msg.content.slice(0, 500)}${msg.content.length > 500 ? '...' : ''}`
-    );
-
+    console.log(`🔍 Processing message from *${msg.author.tag}* in <#${msg.channel.id}>`);
+    
     const urls = msg.content.match(/https?:\/\/[^\s<>"]+/gi);
     if (!urls) {
       console.log(`ℹ️ No URLs found in message`);
