@@ -111,31 +111,45 @@ const getPostInfo = content => {
   let subredditLink = '#';
   let postLink = '#';
 
-  // Extract subreddit and subreddit link
+  // Extract subreddit name
   const subredditMatch = content.match(
-    /r\/\[([^\]]+)\]\(<<([^>]+)>>\)/i
+    /r\/\[?([\w]+)\]?/i
   );
 
   if (subredditMatch) {
     subreddit = subredditMatch[1].trim();
-    subredditLink = subredditMatch[2].trim();
   }
 
-  // Extract title and post link safely
-  // Works with titles containing brackets like:
-  // [F] Title
-  // Title [F]
-  // Title [A] [B]
+  // Extract subreddit link
+  const subredditLinkMatch = content.match(
+    /r\/\[?[^\]]+\]?\(<<([^>]+)>>\)/i
+  );
+
+  if (subredditLinkMatch) {
+    subredditLink = subredditLinkMatch[1].trim();
+  }
+
+  // Extract title and post link
   const afterSubreddit = content.split('>>):')[1];
 
   if (afterSubreddit) {
-    const postMatch = afterSubreddit.match(
-      /\[([\s\S]*)\]\(<<([^>]+)>>\)/i
+
+    // Title inside [ ]
+    const titleMatch = afterSubreddit.match(
+      /\[([\s\S]*)\]\(<<[^>]+>>\)/i
     );
 
-    if (postMatch) {
-      title = postMatch[1].trim();
-      postLink = postMatch[2].trim();
+    if (titleMatch) {
+      title = titleMatch[1].trim();
+    }
+
+    // Post link
+    const postLinkMatch = afterSubreddit.match(
+      /\[.*\]\(<<([^>]+)>>\)/i
+    );
+
+    if (postLinkMatch) {
+      postLink = postLinkMatch[1].trim();
     }
   }
 
