@@ -36,6 +36,7 @@ const SUBREDDIT_CHANNEL_GROUPS = {
 
   '1536090435402076240': [
     'ediblebuttholes',
+    'assholegw',
     'stinkystarfish',
     'fingerherass',
     'degradingholes'
