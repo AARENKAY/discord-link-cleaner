@@ -29,10 +29,26 @@ app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Health server on port ${PORT
 
 // ---------- CONFIG ----------
 // Keys are lowercase to match .toLowerCase() lookup
-const SUBREDDIT_CHANNEL_MAP = {
-  scatporn2: '1466301671301714012',
-  ediblebuttholes: '1536090435402076240'
+const SUBREDDIT_CHANNEL_GROUPS = {
+  '1466301671301714012': [
+    'scatporn2'
+  ],
+
+  '1536090435402076240': [
+    'ediblebuttholes',
+    'stinkystarfish',
+    'fingerherass',
+    'degradingholes'
+  ]
 };
+
+// Generate subreddit -> channel lookup map
+const SUBREDDIT_CHANNEL_MAP = Object.fromEntries(
+  Object.entries(SUBREDDIT_CHANNEL_GROUPS)
+    .flatMap(([channelId, subreddits]) =>
+      subreddits.map(sub => [sub, channelId])
+    )
+);
 
 const TARGET_BOT_IDS = ['1531274702067073157'];
 const ALLOWED_EXTS = ['.mp4', '.gif', '.gifv', '.webm'];
