@@ -29,7 +29,8 @@ app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Health server on port ${PORT
 
 // ---------- CONFIG ----------
 const SUBREDDIT_CHANNEL_MAP = {
-  scatporn2: '1466301671301714012'
+  scatporn2: '1466301671301714012',
+  EdibleButtholes: '1537376472149524480'
 };
 
 const TARGET_BOT_IDS = ['1531274702067073157'];
