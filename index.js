@@ -28,9 +28,10 @@ app.get('/', (req, res) => res.send('Discord Link Cleaner Bot - Health: /health'
 app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Health server on port ${PORT}`));
 
 // ---------- CONFIG ----------
+// Keys are lowercase to match .toLowerCase() lookup
 const SUBREDDIT_CHANNEL_MAP = {
   scatporn2: '1466301671301714012',
-  EdibleButtholes: '1537376472149524480'
+  ediblebuttholes: '1537376472149524480'
 };
 
 const TARGET_BOT_IDS = ['1531274702067073157'];
@@ -43,9 +44,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const originalLog = console.log;
 const originalError = console.error;
 
+// IMPROVED: only wraps URLs that are not already inside < >
 const suppressEmbeds = text => {
   if (!text) return text;
-  return text.replace(/https?:\/\/[^\s<>"]+/gi, '<$&>');
+  return text.replace(
+    /(?<!<)https?:\/\/[^\s<>"]+(?!>)/gi,
+    '<$&>'
+  );
 };
 
 const logAndSend = async (message, level = 'log') => {
@@ -82,6 +87,9 @@ const cleanUrl = url => {
   return c.split('?')[0].replace(/\/+$/, '');
 };
 
+// Simplified: always wrap (suppressEmbeds will skip already-wrapped ones)
+const formatDiscordLink = url => `<${url}>`;
+
 const formatMessage = async (ch, postInfo, urls) => {
   const { title, subreddit, author, subredditLink, postLink } = postInfo;
 
@@ -103,7 +111,7 @@ const formatMessage = async (ch, postInfo, urls) => {
   await ch.send('═════════════════════════════════');
 };
 
-// ---------- FIXED getPostInfo – robust to nested brackets ----------
+// ----- FIXED getPostInfo – greedy title capture -----
 const getPostInfo = content => {
   let title = 'Reddit Post';
   let subreddit = 'unknown';
@@ -129,9 +137,9 @@ const getPostInfo = content => {
     subredditLink = subredditLinkMatch[1].trim();
   }
 
-  // Extract title and post link
+  // Extract title and post link – greedy (.*) captures nested brackets
   const postMatch = content.match(
-    /:\s*\[([\s\S]*?)\]\(<([^>]+)>\)/i
+    /:\s*\[(.*)\]\(<([^>]+)>\)/i
   );
 
   if (postMatch) {
@@ -186,7 +194,13 @@ client.on('messageCreate', async msg => {
 
   if (TARGET_BOT_IDS.includes(msg.author.id)) {
     console.log(`\n📩 New message from ${msg.author.tag} in #${msg.channel.name}`);
-    console.log(`📝 Full content:\n${msg.content}`);
+
+    // Wrap plain URLs to prevent embeds in logs (suppressEmbeds will skip these)
+    const formattedContent = msg.content.replace(
+      /https?:\/\/[^\s<>"]+/gi,
+      url => formatDiscordLink(url)
+    );
+    console.log(`📝 Full content:\n${formattedContent}`);
 
     await sendLog(
       LOG_CHANNEL_ID,
@@ -264,7 +278,6 @@ client.on('messageCreate', async msg => {
         if (SUBREDDIT_CHANNEL_MAP[subForRedirect]) {
           try {
             const channelId = SUBREDDIT_CHANNEL_MAP[subForRedirect];
-            // --- FIXED FETCH WITH BETTER ERROR LOGGING ---
             const fetchedChannel = await client.channels.fetch(channelId, { force: true });
             if (!fetchedChannel) {
               console.error(`❌ Channel ${channelId} not found (null), falling back to original`);
@@ -274,10 +287,9 @@ client.on('messageCreate', async msg => {
               await sendLog(LOG_CHANNEL_ID, `🔄 Redirected to <#${channelId}> because of subreddit r/${subForRedirect}`);
             }
           } catch (e) {
-            // --- LOG THE EXACT DISCORD ERROR CODE ---
             console.error(`❌ Redirect fetch failed. Code: ${e.code} - ${e.message}`);
             await sendLog(LOG_CHANNEL_ID, `⚠️ Redirect fetch failed (${e.code}): ${e.message}. Falling back to original channel.`);
-            // keep targetChannel = msg.channel (already set)
+            // keep targetChannel = msg.channel
           }
         }
 
