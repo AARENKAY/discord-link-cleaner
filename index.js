@@ -71,14 +71,20 @@ const suppressEmbeds = text => {
 };
 
 const logAndSend = async (message, level = 'log') => {
-  const ts = new Date().toISOString();
-  originalLog(`[${ts}] ${message}`);
+  originalLog(message);
+
   try {
     const channel = await client.channels.fetch(LOG_CHANNEL_ID);
     if (!channel) return;
-    let msg = `\`[${ts}]\` ${suppressEmbeds(message)}`;
-    if (msg.length > 1900) msg = msg.slice(0, 1900) + '... (truncated)';
+
+    let msg = suppressEmbeds(message);
+
+    if (msg.length > 1900) {
+      msg = msg.slice(0, 1900) + '... (truncated)';
+    }
+
     await channel.send(msg);
+
   } catch (e) {
     originalError('Failed to send log to Discord:', e.message);
   }
