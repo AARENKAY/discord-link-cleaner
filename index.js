@@ -210,18 +210,11 @@ client.on('messageCreate', async msg => {
   if (msg.author.id === client.user.id) return;
 
   if (TARGET_BOT_IDS.includes(msg.author.id)) {
-    console.log(`\n📩 New message from ${msg.author.tag} in #${msg.channel.name}`);
-
-    // Wrap plain URLs to prevent embeds in logs (suppressEmbeds will skip these)
-    const formattedContent = msg.content.replace(
-      /https?:\/\/[^\s<>"]+/gi,
-      url => formatDiscordLink(url)
-    );
-    console.log(`📝 Full content:\n${formattedContent}`);
+    console.log(`\n📩 New message from *${msg.author.tag}* in <#${msg.channel.id}>\n📝 **Content:**\n${msg.content.slice(0, 500)}${msg.content.length > 500 ? '...' : ''}`);
 
     await sendLog(
       LOG_CHANNEL_ID,
-      `🔍 Processing message from **${msg.author.tag}** in <#${msg.channel.id}>\n📝 **Content:**\n${msg.content.slice(0, 500)}${msg.content.length > 500 ? '...' : ''}`
+      `🔍 Processing message from *${msg.author.tag}* in <#${msg.channel.id}>\n📝 **Content:**\n${msg.content.slice(0, 500)}${msg.content.length > 500 ? '...' : ''}`
     );
 
     const urls = msg.content.match(/https?:\/\/[^\s<>"]+/gi);
