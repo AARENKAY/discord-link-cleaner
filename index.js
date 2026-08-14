@@ -31,15 +31,12 @@ app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Health server on port ${PORT
 // Keys are lowercase to match .toLowerCase() lookup
 const SUBREDDIT_CHANNEL_GROUPS = {
   '1466301671301714012': [
-    'scatporn2'
+    'girlspoopandfart'
   ],
 
   '1536090435402076240': [
     'ediblebuttholes',
-    'assholegw',
-    'stinkystarfish',
-    'fingerherass',
-    'degradingholes'
+    'assholegw'
   ]
 };
 
