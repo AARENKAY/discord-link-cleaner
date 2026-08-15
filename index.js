@@ -38,7 +38,7 @@ const SUBREDDIT_CHANNEL_GROUPS = {
     'ediblebuttholes'
   ],
     
-// Testing Channel 
+  // Testing Channel 
   '1537376472149524480': [
     'scatporn2'
   ]
@@ -111,9 +111,6 @@ const cleanUrl = url => {
   return c.split('?')[0].replace(/\/+$/, '');
 };
 
-// Simplified: always wrap (suppressEmbeds will skip already-wrapped ones)
-const formatDiscordLink = url => `<${url}>`;
-
 const formatMessage = async (ch, postInfo, urls) => {
   const { title, subreddit, author, subredditLink, postLink } = postInfo;
 
@@ -143,65 +140,24 @@ const getPostInfo = content => {
   let subredditLink = '#';
   let postLink = '#';
 
-  // Extract subreddit name
-  const subredditMatch = content.match(
-    /r\/\[([^\]]+)\]/i
-  );
+  const subredditMatch = content.match(/r\/\[([^\]]+)\]/i);
+  if (subredditMatch) subreddit = subredditMatch[1].trim();
 
-  if (subredditMatch) {
-    subreddit = subredditMatch[1].trim();
-  }
+  const subredditLinkMatch = content.match(/r\/\[[^\]]+\]\(<([^>]+)>\)/i);
+  if (subredditLinkMatch) subredditLink = subredditLinkMatch[1].trim();
 
-  // Extract subreddit link
-  const subredditLinkMatch = content.match(
-    /r\/\[[^\]]+\]\(<([^>]+)>\)/i
-  );
-
-  if (subredditLinkMatch) {
-    subredditLink = subredditLinkMatch[1].trim();
-  }
-
-  // Extract title and post link – greedy (.*) captures nested brackets
-  const postMatch = content.match(
-    /:\s*\[(.*)\]\(<([^>]+)>\)/i
-  );
-
+  const postMatch = content.match(/:\s*\[(.*)\]\(<([^>]+)>\)/i);
   if (postMatch) {
     title = postMatch[1].trim();
     postLink = postMatch[2].trim();
   }
 
-  // Extract author
-  const authorMatch = content.match(
-    /\*by\s+([^*\s·]+)/i
-  );
+  const authorMatch = content.match(/\*by\s+([^*\s·]+)/i);
+  if (authorMatch) author = authorMatch[1].trim();
 
-  if (authorMatch) {
-    author = authorMatch[1].trim();
-  }
+  title = title.replace(/[\u{1F600}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FEFF}]/gu, '').trim();
 
-  // Remove emojis
-  title = title.replace(
-    /[\u{1F600}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FEFF}]/gu,
-    ''
-  ).trim();
-
-  return {
-    title,
-    subreddit,
-    author,
-    subredditLink,
-    postLink
-  };
-};
-
-const sendLog = async (channelId, msg) => {
-  try {
-    const channel = await client.channels.fetch(channelId);
-    if (channel) await channel.send(suppressEmbeds(msg));
-  } catch (e) {
-    originalError('Log channel error:', e.message);
-  }
+  return { title, subreddit, author, subredditLink, postLink };
 };
 
 // ---------- BOT EVENTS ----------
@@ -219,35 +175,29 @@ client.on('messageCreate', async msg => {
   if (TARGET_BOT_IDS.includes(msg.author.id)) {
     console.log(`\n📩 New message from *${msg.author.tag}* in <#${msg.channel.id}>\n📝 **Content:**\n${msg.content.slice(0, 500)}${msg.content.length > 500 ? '...' : ''}`);
 
-    console.log(`⚙️ Processing message from *${msg.author.tag}* in <#${msg.channel.id}>`);
-    
     const urls = msg.content.match(/https?:\/\/[^\s<>"]+/gi);
     if (!urls) {
       console.log(`ℹ️ No URLs found in message`);
       return;
     }
-    console.log(`🔗 Found ${urls.length} raw URLs:`, urls);
 
     const postInfo = getPostInfo(msg.content);
     console.log(`ℹ️ Post info - Title: "${postInfo.title}", Sub: ${postInfo.subreddit}, Author: ${postInfo.author}`);
 
-    // ---------- NEW: Check for restricted tags in title ----------
+    // Check for restricted tags in title
     const restrictedPattern = /\[m\]|\(m\)|\[tf\]|\(tf\)|\[tm\]|\(tm\)/i;
     if (postInfo.title && restrictedPattern.test(postInfo.title)) {
       console.log(`🚫 Title contains forbidden tags, deleting message without repost.`);
       await msg.delete().catch(console.error);
-      await sendLog(LOG_CHANNEL_ID, `🚫 Deleted message from **${msg.author.tag}** because title contains restricted tags: ${postInfo.title}`);
-      return; // Stop processing – no repost
+      console.log(`🚫 Deleted message from **${msg.author.tag}** because title contains restricted tags: ${postInfo.title}`);
+      return;
     }
 
     let allowed = [], blocked = [], seen = new Set();
 
     for (const u of urls) {
       const clean = cleanUrl(u);
-      if (seen.has(clean)) {
-        console.log(`   🔁 Duplicate (skipped): ${clean}`);
-        continue;
-      }
+      if (seen.has(clean)) continue;
       seen.add(clean);
       const low = clean.toLowerCase();
       if (
@@ -256,11 +206,8 @@ client.on('messageCreate', async msg => {
         ALLOWED_EXTS.some(ext => low.includes(ext) || low.endsWith(ext))
       ) {
         allowed.push(clean);
-        console.log(`   ✅ Allowed: ${clean}`);
-        if (low.includes('redgifs.com')) console.log(`     ↳ (Redgifs)`);
       } else {
         blocked.push(clean);
-        console.log(`   ❌ Blocked: ${clean}`);
       }
     }
 
@@ -270,17 +217,17 @@ client.on('messageCreate', async msg => {
       REDDIT_NATIVE_DOMAINS.some(domain => url.includes(domain))
     );
     if (hasRedditNative) {
-      console.log(`🎯 Reddit native media detected, filtering out external...`);
       allAllowed = allAllowed.filter(url =>
         REDDIT_NATIVE_DOMAINS.some(domain => url.includes(domain))
       );
-      console.log(`   ↳ Remaining native URLs:`, allAllowed);
     }
 
-    console.log(`📊 Final allowed URLs (${allAllowed.length}):`, allAllowed);
-    console.log(`🚫 Blocked URLs (${blocked.length}):`, blocked);
-
-    console.log(`🔎 **Analysis:**\n• From: **${msg.author.tag}**\n• Title: ${postInfo.title}\n• Subreddit: r/${postInfo.subreddit}\n• URLs: ${urls.length} total, ${allAllowed.length} allowed, ${blocked.length} blocked`
+    // Single comprehensive log for this message
+    console.log(
+      `🔎 **Analysis:**\n• From: **${msg.author.tag}**\n• Title: ${postInfo.title}\n• Subreddit: r/${postInfo.subreddit}\n` +
+      `• URLs: ${urls.length} total, ${allAllowed.length} allowed, ${blocked.length} blocked\n` +
+      (allAllowed.length ? `• Allowed: ${allAllowed.join(', ')}` : '') +
+      (blocked.length ? `\n• Blocked: ${blocked.join(', ')}` : '')
     );
 
     if (allAllowed.length === 0 && blocked.length) {
@@ -304,13 +251,10 @@ client.on('messageCreate', async msg => {
               console.error(`❌ Channel ${channelId} not found (null), falling back to original`);
             } else {
               targetChannel = fetchedChannel;
-              console.log(`🔄 Redirecting to channel #${targetChannel.name} (${channelId}) for subreddit r/${subForRedirect}`);
-              await sendLog(LOG_CHANNEL_ID, `🔄 Redirected to <#${channelId}> because of subreddit r/${subForRedirect}`);
+              console.log(`🔄 Redirected to <#${channelId}> for subreddit r/${subForRedirect}`);
             }
           } catch (e) {
-            console.error(`❌ Redirect fetch failed. Code: ${e.code} - ${e.message}`);
-            await sendLog(LOG_CHANNEL_ID, `⚠️ Redirect fetch failed (${e.code}): ${e.message}. Falling back to original channel.`);
-            // keep targetChannel = msg.channel
+            console.error(`❌ Redirect fetch failed (${e.code}): ${e.message}. Falling back to original channel.`);
           }
         }
 
@@ -319,14 +263,12 @@ client.on('messageCreate', async msg => {
         console.log(`✅ Cleaned message sent`);
 
         await sleep(2000);
-        await sendLog(
-          LOG_CHANNEL_ID,
+        console.log(
           `✅ **Cleaned:**\n• From: **${msg.author.tag}**\n• Posted: ${allAllowed.length} URLs\n• Blocked: ${blocked.length} URLs` +
-            (targetChannel.id !== msg.channel.id ? `\n• Redirected to <#${targetChannel.id}>` : '')
+          (targetChannel.id !== msg.channel.id ? `\n• Redirected to <#${targetChannel.id}>` : '')
         );
       } catch (e) {
-        console.error(`❌ Error: ${e.message}`);
-        await sendLog(LOG_CHANNEL_ID, `❌ **Error:** ${e.message}\n• From: **${msg.author.tag}**`);
+        console.error(`❌ Error: ${e.message}\n• From: **${msg.author.tag}**`);
       }
     }
     return;
@@ -354,16 +296,13 @@ client.on('messageCreate', async msg => {
   });
   const unique = [...new Set(converted)];
 
-  const lines = unique.map(u => `[•](${u})`);
-  const reply = lines.join('\n');
+  const reply = unique.map(u => `[•](${u})`).join('\n');
 
   try {
     await msg.reply(reply);
-    console.log(`✅ Replied with: ${unique.join(', ')}`);
-    await sendLog(LOG_CHANNEL_ID, `🐦 Converted tweet for **${msg.author.tag}**: ${unique.join(', ')}`);
+    console.log(`✅ Replied with converted tweet(s): ${unique.join(', ')}`);
   } catch (e) {
-    console.error(`❌ Error replying with converted tweet: ${e.message}`);
-    await sendLog(LOG_CHANNEL_ID, `❌ **Tweet conversion error:** ${e.message}`);
+    console.error(`❌ Tweet conversion error: ${e.message}`);
   }
 });
 
