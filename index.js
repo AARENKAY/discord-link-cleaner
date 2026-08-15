@@ -38,6 +38,10 @@ const SUBREDDIT_CHANNEL_GROUPS = {
     'ediblebuttholes',
     'assholegw'
   ]
+
+  '1537376472149524480': [
+    'scatporn2'
+  ]
 };
 
 // Generate subreddit -> channel lookup map
@@ -226,6 +230,15 @@ client.on('messageCreate', async msg => {
 
     const postInfo = getPostInfo(msg.content);
     console.log(`ℹ️ Post info - Title: "${postInfo.title}", Sub: ${postInfo.subreddit}, Author: ${postInfo.author}`);
+
+    // ---------- NEW: Check for restricted tags in title ----------
+    const restrictedPattern = /\[m\]|\(m\)|\[tf\]|\(tf\)|\[tm\]|\(tm\)/i;
+    if (postInfo.title && restrictedPattern.test(postInfo.title)) {
+      console.log(`🚫 Title contains forbidden tags, deleting message without repost.`);
+      await msg.delete().catch(console.error);
+      await sendLog(LOG_CHANNEL_ID, `🚫 Deleted message from **${msg.author.tag}** because title contains restricted tags: ${postInfo.title}`);
+      return; // Stop processing – no repost
+    }
 
     let allowed = [], blocked = [], seen = new Set();
 
