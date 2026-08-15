@@ -46,7 +46,6 @@ const TARGET_BOT_IDS = ['1531274702067073157'];
 const ALLOWED_EXTS = ['.mp4', '.gif', '.gifv', '.webm'];
 const LOG_CHANNEL_ID = '1530804280720887918';
 const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it'];
-const TEST_CHANNEL_ID = '1537376472149524480';   // <-- NEW
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ---------- LOGGER ----------
@@ -153,10 +152,7 @@ const getPostInfo = content => {
 
 // ---------- REDDIT PROCESSING LOGIC (refactored) ----------
 async function processRedditMessage(msg) {
-  const isTest = msg.content.trim().match(/^#test\b/i);   // <-- detect test command
-  const mode = isTest ? '🧪 TEST' : '📩';
-
-  console.log(`\n${mode} New message from *${msg.author.tag}* in <#${msg.channel.id}>\n📝 **Content:**\n${msg.content.slice(0, 500)}${msg.content.length > 500 ? '...' : ''}`);
+  console.log(`\n📩 New message from *${msg.author.tag}* in <#${msg.channel.id}>\n📝 **Content:**\n${msg.content.slice(0, 500)}${msg.content.length > 500 ? '...' : ''}`);
 
   const urls = msg.content.match(/https?:\/\/[^\s<>"]+/gi);
   if (!urls) {
@@ -170,11 +166,9 @@ async function processRedditMessage(msg) {
   // Check for restricted tags in title
   const restrictedPattern = /\[m\]|\(m\)|\[nb\]|\(nb\)|\[tf\]|\(tf\)|\[tm\]|\(tm\)/i;
   if (postInfo.title && restrictedPattern.test(postInfo.title)) {
-    console.log(`🚫 Title contains forbidden tags, ${isTest ? 'skipping test' : 'deleting message without repost'}.`);
-    if (!isTest) {
-      await msg.delete().catch(console.error);
-      console.log(`🚫 Deleted message from **${msg.author.tag}** because title contains restricted tags: ${postInfo.title}`);
-    }
+    console.log(`🚫 Title contains forbidden tags, deleting message without repost.`);
+    await msg.delete().catch(console.error);
+    console.log(`🚫 Deleted message from **${msg.author.tag}** because title contains restricted tags: ${postInfo.title}`);
     return;
   }
 
@@ -216,51 +210,30 @@ async function processRedditMessage(msg) {
   );
 
   if (allAllowed.length === 0 && blocked.length) {
-    console.log(`🗑️ No allowed URLs, ${isTest ? 'nothing to send' : 'deleting original message'}`);
-    if (!isTest) {
-      return msg.delete();
-    }
-    return;
+    console.log(`🗑️ No allowed URLs, deleting original message`);
+    return msg.delete();
   }
 
   if (allAllowed.length) {
     try {
-      // Only delete original if it's NOT a test
-      if (!isTest) {
-        console.log(`🗑️ Deleting original message...`);
-        await msg.delete();
-        console.log(`✅ Original message deleted`);
-      } else {
-        console.log(`🧪 Test mode – original message kept.`);
-      }
+      console.log(`🗑️ Deleting original message...`);
+      await msg.delete();
+      console.log(`✅ Original message deleted`);
 
-      let targetChannel;
-      if (isTest) {
-        // Force test channel
-        targetChannel = await client.channels.fetch(TEST_CHANNEL_ID);
-        if (!targetChannel) {
-          console.error(`❌ Test channel ${TEST_CHANNEL_ID} not found, falling back to original.`);
-          targetChannel = msg.channel;
-        } else {
-          console.log(`🔄 Test message sent to <#${TEST_CHANNEL_ID}>`);
-        }
-      } else {
-        // Normal redirection logic
-        targetChannel = msg.channel;
-        const subForRedirect = postInfo.subreddit.toLowerCase();
-        if (SUBREDDIT_CHANNEL_MAP[subForRedirect]) {
-          try {
-            const channelId = SUBREDDIT_CHANNEL_MAP[subForRedirect];
-            const fetchedChannel = await client.channels.fetch(channelId, { force: true });
-            if (!fetchedChannel) {
-              console.error(`❌ Channel ${channelId} not found (null), falling back to original`);
-            } else {
-              targetChannel = fetchedChannel;
-              console.log(`🔄 Redirected to <#${channelId}> for subreddit r/${subForRedirect}`);
-            }
-          } catch (e) {
-            console.error(`❌ Redirect fetch failed (${e.code}): ${e.message}. Falling back to original channel.`);
+      let targetChannel = msg.channel;
+      const subForRedirect = postInfo.subreddit.toLowerCase();
+      if (SUBREDDIT_CHANNEL_MAP[subForRedirect]) {
+        try {
+          const channelId = SUBREDDIT_CHANNEL_MAP[subForRedirect];
+          const fetchedChannel = await client.channels.fetch(channelId, { force: true });
+          if (!fetchedChannel) {
+            console.error(`❌ Channel ${channelId} not found (null), falling back to original`);
+          } else {
+            targetChannel = fetchedChannel;
+            console.log(`🔄 Redirected to <#${channelId}> for subreddit r/${subForRedirect}`);
           }
+        } catch (e) {
+          console.error(`❌ Redirect fetch failed (${e.code}): ${e.message}. Falling back to original channel.`);
         }
       }
 
@@ -269,10 +242,9 @@ async function processRedditMessage(msg) {
       console.log(`✅ Cleaned message sent`);
 
       await sleep(2000);
-      const redirectInfo = targetChannel.id !== msg.channel.id ? `\n• Redirected to <#${targetChannel.id}>` : '';
       console.log(
         `✅ **Cleaned:**\n• From: **${msg.author.tag}**\n• Posted: ${allAllowed.length} URLs\n• Blocked: ${blocked.length} URLs` +
-        redirectInfo
+        (targetChannel.id !== msg.channel.id ? `\n• Redirected to <#${targetChannel.id}>` : '')
       );
     } catch (e) {
       console.error(`❌ Error: ${e.message}\n• From: **${msg.author.tag}**`);
