@@ -35,10 +35,10 @@ const SUBREDDIT_CHANNEL_GROUPS = {
   ],
 
   '1536090435402076240': [
-    'ediblebuttholes',
-    'assholegw'
-  ]
-
+    'ediblebuttholes'
+  ],
+    
+// Testing Channel 
   '1537376472149524480': [
     'scatporn2'
   ]
