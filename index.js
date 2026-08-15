@@ -30,18 +30,10 @@ app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Health server on port ${PORT
 // ---------- CONFIG ----------
 // Keys are lowercase to match .toLowerCase() lookup
 const SUBREDDIT_CHANNEL_GROUPS = {
-  '1466301671301714012': [
-    'girlspoopandfart'
-  ],
-
-  '1536090435402076240': [
-    'ediblebuttholes'
-  ],
-    
+  '1466301671301714012': ['girlspoopandfart', 'scatporn2'],
+  '1536090435402076240': ['ediblebuttholes'],
   // Testing Channel 
-  '1537376472149524480': [
-    'scatporn2'
-  ]
+  //'1537376472149524480': ['']
 };
 
 // Generate subreddit -> channel lookup map
@@ -52,7 +44,8 @@ const SUBREDDIT_CHANNEL_MAP = Object.fromEntries(
     )
 );
 
-const TARGET_BOT_IDS = ['1531274702067073157','924485837314474045'];
+const TARGET_BOT_IDS = ['1531274702067073157',//'924485837314474045'
+                        ];
 const ALLOWED_EXTS = ['.mp4', '.gif', '.gifv', '.webm'];
 const LOG_CHANNEL_ID = '1530804280720887918';
 const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it'];
@@ -185,7 +178,7 @@ client.on('messageCreate', async msg => {
     console.log(`ℹ️ Post info - Title: "${postInfo.title}", Sub: ${postInfo.subreddit}, Author: ${postInfo.author}`);
 
     // Check for restricted tags in title
-    const restrictedPattern = /\[m\]|\(m\)|\[tf\]|\(tf\)|\[tm\]|\(tm\)/i;
+    const restrictedPattern = /\[m\]|\(m\)|\[nb\]|\(nb\)|\[tf\]|\(tf\)|\[tm\]|\(tm\)/i;
     if (postInfo.title && restrictedPattern.test(postInfo.title)) {
       console.log(`🚫 Title contains forbidden tags, deleting message without repost.`);
       await msg.delete().catch(console.error);
