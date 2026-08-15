@@ -45,6 +45,7 @@ const SUBREDDIT_CHANNEL_MAP = Object.fromEntries(
 const TARGET_BOT_IDS = ['1531274702067073157'];
 const ALLOWED_EXTS = ['.mp4', '.gif', '.gifv', '.webm'];
 const LOG_CHANNEL_ID = '1530804280720887918';
+const TEST_CHANNEL_ID = '1537376472149524480';
 const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it'];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -268,8 +269,13 @@ client.on('messageCreate', async msg => {
   const isTargetBot = TARGET_BOT_IDS.includes(msg.author.id);
   const isTestCommand = msg.content.trim().match(/^#test\b/i) && !isTargetBot;
 
-  if (isTargetBot || isTestCommand) {
+  if (isTargetBot) {
     await processRedditMessage(msg);
+    return;
+  }
+
+  if (isTestCommand) {
+    await processRedditMessage(msg, { targetChannelOverride: TEST_CHANNEL_ID });
     return;
   }
 
