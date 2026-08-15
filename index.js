@@ -30,10 +30,8 @@ app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Health server on port ${PORT
 // ---------- CONFIG ----------
 // Keys are lowercase to match .toLowerCase() lookup
 const SUBREDDIT_CHANNEL_GROUPS = {
-  '1466301671301714012': ['girlspoopandfart', 'scatporn2'],
-  '1536090435402076240': ['ediblebuttholes'],
-  // Testing Channel 
-  //'1537376472149524480': ['']
+  '1466301671301714012': ['scatporn2'],
+  '1536090435402076240': ['ediblebuttholes']
 };
 
 // Generate subreddit -> channel lookup map
@@ -44,8 +42,7 @@ const SUBREDDIT_CHANNEL_MAP = Object.fromEntries(
     )
 );
 
-const TARGET_BOT_IDS = ['1531274702067073157',//'924485837314474045'
-                        ];
+const TARGET_BOT_IDS = ['1531274702067073157'];
 const ALLOWED_EXTS = ['.mp4', '.gif', '.gifv', '.webm'];
 const LOG_CHANNEL_ID = '1530804280720887918';
 const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it'];
