@@ -45,8 +45,8 @@ const SUBREDDIT_CHANNEL_MAP = Object.fromEntries(
 const TARGET_BOT_IDS = ['1531274702067073157'];
 const ALLOWED_EXTS = ['.mp4', '.gif', '.gifv', '.webm'];
 const LOG_CHANNEL_ID = '1530804280720887918';
-const TEST_CHANNEL_ID = '1537376472149524480';
 const REDDIT_NATIVE_DOMAINS = ['i.redd.it', 'v.redd.it'];
+const TEST_CHANNEL_ID = '1537376472149524480';   // <-- NEW
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ---------- LOGGER ----------
@@ -152,10 +152,11 @@ const getPostInfo = content => {
 };
 
 // ---------- REDDIT PROCESSING LOGIC (refactored) ----------
-async function processRedditMessage(msg, options = {}) {
-  const { deleteOriginal = true, targetChannelOverride = null } = options;
+async function processRedditMessage(msg) {
+  const isTest = msg.content.trim().match(/^#test\b/i);   // <-- detect test command
+  const mode = isTest ? '🧪 TEST' : '📩';
 
-  console.log(`\n📩 New message from *${msg.author.tag}* in <#${msg.channel.id}>\n📝 **Content:**\n${msg.content.slice(0, 500)}${msg.content.length > 500 ? '...' : ''}`);
+  console.log(`\n${mode} New message from *${msg.author.tag}* in <#${msg.channel.id}>\n📝 **Content:**\n${msg.content.slice(0, 500)}${msg.content.length > 500 ? '...' : ''}`);
 
   const urls = msg.content.match(/https?:\/\/[^\s<>"]+/gi);
   if (!urls) {
@@ -166,19 +167,19 @@ async function processRedditMessage(msg, options = {}) {
   const postInfo = getPostInfo(msg.content);
   console.log(`ℹ️ Post info - Title: "${postInfo.title}", Sub: ${postInfo.subreddit}, Author: ${postInfo.author}`);
 
-  // Restricted tags check
+  // Check for restricted tags in title
   const restrictedPattern = /\[m\]|\(m\)|\[nb\]|\(nb\)|\[tf\]|\(tf\)|\[tm\]|\(tm\)/i;
   if (postInfo.title && restrictedPattern.test(postInfo.title)) {
-    console.log(`🚫 Title contains forbidden tags, deleting message without repost.`);
-    if (deleteOriginal) {
+    console.log(`🚫 Title contains forbidden tags, ${isTest ? 'skipping test' : 'deleting message without repost'}.`);
+    if (!isTest) {
       await msg.delete().catch(console.error);
+      console.log(`🚫 Deleted message from **${msg.author.tag}** because title contains restricted tags: ${postInfo.title}`);
     }
-    console.log(`🚫 ${deleteOriginal ? 'Deleted' : 'Skipped'} message from **${msg.author.tag}** because title contains restricted tags: ${postInfo.title}`);
     return;
   }
 
-  // URL filtering (unchanged)
   let allowed = [], blocked = [], seen = new Set();
+
   for (const u of urls) {
     const clean = cleanUrl(u);
     if (seen.has(clean)) continue;
@@ -196,6 +197,7 @@ async function processRedditMessage(msg, options = {}) {
   }
 
   let allAllowed = [...allowed];
+
   const hasRedditNative = allAllowed.some(url =>
     REDDIT_NATIVE_DOMAINS.some(domain => url.includes(domain))
   );
@@ -205,7 +207,7 @@ async function processRedditMessage(msg, options = {}) {
     );
   }
 
-  // Log analysis
+  // Single comprehensive log for this message
   console.log(
     `🔎 **Analysis:**\n• From: **${msg.author.tag}**\n• Title: ${postInfo.title}\n• Subreddit: r/${postInfo.subreddit}\n` +
     `• URLs: ${urls.length} total, ${allAllowed.length} allowed, ${blocked.length} blocked\n` +
@@ -214,8 +216,8 @@ async function processRedditMessage(msg, options = {}) {
   );
 
   if (allAllowed.length === 0 && blocked.length) {
-    console.log(`🗑️ No allowed URLs, ${deleteOriginal ? 'deleting' : 'skipping'} original message`);
-    if (deleteOriginal) {
+    console.log(`🗑️ No allowed URLs, ${isTest ? 'nothing to send' : 'deleting original message'}`);
+    if (!isTest) {
       return msg.delete();
     }
     return;
@@ -223,29 +225,28 @@ async function processRedditMessage(msg, options = {}) {
 
   if (allAllowed.length) {
     try {
-      if (deleteOriginal) {
+      // Only delete original if it's NOT a test
+      if (!isTest) {
         console.log(`🗑️ Deleting original message...`);
         await msg.delete();
         console.log(`✅ Original message deleted`);
       } else {
-        console.log(`ℹ️ Original message kept (test command)`);
+        console.log(`🧪 Test mode – original message kept.`);
       }
 
-      let targetChannel = msg.channel;
-      if (targetChannelOverride) {
-        try {
-          const fetched = await client.channels.fetch(targetChannelOverride, { force: true });
-          if (!fetched) {
-            console.error(`❌ Override channel ${targetChannelOverride} not found, falling back to original`);
-          } else {
-            targetChannel = fetched;
-            console.log(`🔄 Using override channel <#${targetChannelOverride}>`);
-          }
-        } catch (e) {
-          console.error(`❌ Override fetch failed: ${e.message}. Falling back to original.`);
+      let targetChannel;
+      if (isTest) {
+        // Force test channel
+        targetChannel = await client.channels.fetch(TEST_CHANNEL_ID);
+        if (!targetChannel) {
+          console.error(`❌ Test channel ${TEST_CHANNEL_ID} not found, falling back to original.`);
+          targetChannel = msg.channel;
+        } else {
+          console.log(`🔄 Test message sent to <#${TEST_CHANNEL_ID}>`);
         }
       } else {
-        // Subreddit redirect (only if no override)
+        // Normal redirection logic
+        targetChannel = msg.channel;
         const subForRedirect = postInfo.subreddit.toLowerCase();
         if (SUBREDDIT_CHANNEL_MAP[subForRedirect]) {
           try {
@@ -268,15 +269,17 @@ async function processRedditMessage(msg, options = {}) {
       console.log(`✅ Cleaned message sent`);
 
       await sleep(2000);
+      const redirectInfo = targetChannel.id !== msg.channel.id ? `\n• Redirected to <#${targetChannel.id}>` : '';
       console.log(
         `✅ **Cleaned:**\n• From: **${msg.author.tag}**\n• Posted: ${allAllowed.length} URLs\n• Blocked: ${blocked.length} URLs` +
-        (targetChannel.id !== msg.channel.id ? `\n• ${targetChannelOverride ? 'Test channel' : 'Redirected'} <#${targetChannel.id}>` : '')
+        redirectInfo
       );
     } catch (e) {
       console.error(`❌ Error: ${e.message}\n• From: **${msg.author.tag}**`);
     }
   }
 }
+
 // ---------- BOT EVENTS ----------
 client.once('clientReady', () => {
   console.log(`✅ Bot online as ${client.user.tag}`);
@@ -293,13 +296,8 @@ client.on('messageCreate', async msg => {
   const isTargetBot = TARGET_BOT_IDS.includes(msg.author.id);
   const isTestCommand = msg.content.trim().match(/^#test\b/i) && !isTargetBot;
 
-  if (isTargetBot) {
-    await processRedditMessage(msg, { deleteOriginal: true });
-    return;
-  }
-
-  if (isTestCommand) {
-    await processRedditMessage(msg, { deleteOriginal: true, targetChannelOverride: TEST_CHANNEL_ID });
+  if (isTargetBot || isTestCommand) {
+    await processRedditMessage(msg);
     return;
   }
 
