@@ -137,16 +137,16 @@ const getPostInfo = content => {
   const subredditLinkMatch = content.match(/r\/\[[^\]]+\]\(<([^>]+)>\)/i);
   if (subredditLinkMatch) subredditLink = subredditLinkMatch[1].trim();
 
-  const postMatch = content.match(/:\s*\[(.*)\]\(<([^>]+)>\)/i);
+  const postMatch = content.match(/:\s*\[([\s\S]*)\]\(<([^>]+)>\)/i);
   if (postMatch) {
-    title = postMatch[1].trim();
+    title = postMatch[1].replace(/\s+/g, ' ').trim();
     postLink = postMatch[2].trim();
   }
 
   const authorMatch = content.match(/\*by\s+([^*\s·]+)/i);
   if (authorMatch) author = authorMatch[1].trim();
 
-  title = title.replace(/[\u{1F600}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FEFF}]/gu, '').trim();
+  title = title.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FEFF}]/gu, '').trim();
 
   return { title, subreddit, author, subredditLink, postLink };
 };
