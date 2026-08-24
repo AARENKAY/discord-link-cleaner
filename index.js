@@ -120,7 +120,7 @@ const formatMessage = async (ch, postInfo, urls) => {
   } else {
     await ch.send(msg);
   }
-  await ch.send('═════════════════════════════════');
+  await ch.send('⠀ ▫️▪️▫️▪️▫️▪️▫️▪️▫️▪️▫️▪️▫️▪️▫️▪️▫️▪️▫️');
 };
 
 // ----- FIXED getPostInfo – greedy title capture -----
