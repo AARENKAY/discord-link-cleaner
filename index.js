@@ -147,6 +147,7 @@ const getPostInfo = content => {
   if (authorMatch) author = authorMatch[1].trim();
 
   title = title.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FEFF}]/gu, '').trim();
+  if (!title) title = 'Reddit Post';
 
   return { title, subreddit, author, subredditLink, postLink };
 };
