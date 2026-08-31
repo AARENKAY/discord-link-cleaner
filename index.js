@@ -30,8 +30,7 @@ app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Health server on port ${PORT
 // ---------- CONFIG ----------
 // Keys are lowercase to match .toLowerCase() lookup
 const SUBREDDIT_CHANNEL_GROUPS = {
-  '1466301671301714012': ['scatporn2','peekink'],
-  '1536090435402076240': ['ediblebuttholes']
+  '1544045468013559880': ['scatporn2','peekink','ediblebuttholes']
 };
 
 // Generate subreddit -> channel lookup map
